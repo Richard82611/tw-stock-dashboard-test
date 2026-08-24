@@ -458,10 +458,15 @@ def signal_current_text(stats):
 
 
 def risk_signal_level(v):
-    """把既有左側減碼警示拆成『黃色風險觀察』與真正『橘色向上減碼』。"""
+    """Wade v2：歷史回測後的風險分級。
+
+    - 左側減碼觀察：保留 reduce；代表回撤風險升高，但不是全面清倉。
+    - 高檔內部轉弱：降為 watch；25次事件後20日仍有80%上漲，不能單獨當賣出。
+    - 強度快速降溫／盤面廣度偏弱：都是 watch，不等於趨勢已轉空。
+    """
     s=text(v,"—")
     if not signal_active(s): return "none"
-    if "🟠" in s or "左側減碼" in s or "高檔內部轉弱" in s:
+    if "左側減碼觀察" in s:
         return "reduce"
     return "watch"
 
@@ -485,6 +490,89 @@ def risk_signal_phase(value, risk_stats, reduce_stats):
     if cur==2: return "🟠 第2天｜風險升高"
     return f"🔴 第{cur}天｜持續退潮"
 
+
+
+# ============================================================================
+# Wade v2 歷史註解資料（固定研究版本）
+# 來源：wade-history-results；研究期間 2018-01-02 ～ 2026-08-21。
+# 回測口徑：D 日收盤確認訊號，D+1 收盤才是第一個可交易基準，避免偷看未來。
+# 這些數字是歷史描述，不是未來保證；重跑完整歷史回測後應同步更新本區。
+# ============================================================================
+WADE_V2_RESEARCH_VERSION="2018-01-02～2026-08-21｜因果安全回測 v1.0｜D收盤確認、D+1開始"
+WADE_V2_STATS={
+    "明顯增加":{"n20":522,"ret20":2.43,"win20":71.7,"ret60":7.28,"win60":75.4},
+    "向上":{"n20":965,"ret20":1.68,"win20":65.3,"ret60":5.49,"win60":71.1},
+    "高檔續強":{"n20":353,"ret20":3.39,"win20":74.2,"mae20":-2.34,"ret60":8.30,"win60":79.3},
+    "高檔轉弱":{"n20":122,"ret20":0.91,"win20":48.4,"mae20":-4.91},
+    "早期轉強A":{"n20":35,"ret20":2.02,"win20":74.3,"ret60":6.00,"win60":74.3},
+    "早期轉強B":{"n20":96,"ret20":1.03,"win20":65.6,"ret60":3.90,"win60":67.7},
+    "左側減碼觀察":{"events":37,"ret20":1.37,"down20":51.4,"mae20":-4.06},
+    "高檔內部轉弱":{"events":25,"ret20":3.22,"win20":80.0,"mae20":-2.93},
+    "強度快速降溫":{"events":97,"ret20":3.12,"win20":75.3,"mae20":-2.61},
+    "盤面廣度偏弱":{"events":152,"ret20":1.29,"win20":63.8,"mae20":-3.80},
+}
+
+
+def wade_v2_direction_label(direction):
+    """把舊版『向上』拆成強弱兩級。"""
+    d=text(direction,"—")
+    if d=="明顯增加": return "🔥 A級向上｜明顯增加"
+    if d=="增加": return "↗️ B級向上｜增加"
+    if d=="持平": return "➡️ 持平｜等待方向"
+    if d=="減少": return "↘️ 轉弱｜減少"
+    if d=="明顯減少": return "📉 明顯轉弱｜明顯減少"
+    return d
+
+
+def wade_v2_early_label(water, signal, stats):
+    """低水位發生的早期轉強列 A 級；正常水位列 B 級。"""
+    cur=int((stats or {}).get("目前連續",0) or 0)
+    if not signal_active(signal) or cur<=0: return "未觸發"
+    grade="A級" if text(water,"") in {"極低水位","偏低水位"} else "B級"
+    timing="初現" if cur==1 else "確認" if cur==2 else "持續轉強"
+    icon="🟢⭐" if grade=="A級" else "🟢"
+    return f"{icon} {grade}｜第{cur}天 {timing}"
+
+
+def wade_v2_risk_label(stage, raw_alert):
+    """把原始警示翻成操作語言，避免把『觀察』誤記成『賣出』。"""
+    s=text(raw_alert,"—"); stg=text(stage,"")
+    if stg=="高檔轉弱": return "🔴 高檔轉弱｜提高警戒"
+    if "左側減碼觀察" in s: return "🟠 回撤風險升高｜保護獲利"
+    if "高檔內部轉弱" in s: return "🟡 高檔震盪觀察｜不是賣出"
+    if "強度快速降溫" in s: return "🟡 漲勢降溫｜趨勢尚未破壞"
+    if "盤面廣度偏弱" in s: return "🟡 廣度風險觀察｜停止追價"
+    return "✅ 未觸發風險警示"
+
+
+def wade_v2_current_note(stage,direction,water,raw_alert,early_signal):
+    """今日訊號的『代表什麼／歷史結果／操作註解』。"""
+    notes=[]
+    d=text(direction,"—"); stg=text(stage,"—"); w=text(water,"—"); a=text(raw_alert,"—")
+    if d=="明顯增加":
+        notes.append(("🔥 強勢向上 A級","RS 強勢股短中期廣度同步擴張。","後20日平均 +2.43%，上漲率 71.7%；60日平均 +7.28%。","偏多持有、強股續抱；不要機械式提前賣出。"))
+    elif d=="增加":
+        notes.append(("↗️ 一般向上 B級","市場廣度改善，但強度低於明顯增加。","向上狀態後20日平均 +1.68%，上漲率 65.3%。","可偏多，但仍需 Wade、上漲家數與價格確認；不是無條件追高。"))
+    elif d in {"減少","明顯減少"}:
+        notes.append(("↘️ 廣度轉弱","RS 強勢股正在收縮。","轉弱需搭配水位解讀；高水位轉弱的警示價值最高。","先看是否同時進入高檔轉弱；不要因一天減少就全部賣出。"))
+    if stg=="高檔續強":
+        notes.append(("🚀 高檔續強","市場雖在高水位，但內部趨勢仍擴張。","後20日平均 +3.39%、上漲率 74.2%；60日平均 +8.30%、上漲率 79.3%。","以持有與移動保護為主；高水位本身不是賣出理由。"))
+    elif stg=="高檔轉弱":
+        notes.append(("🔴 高檔轉弱","高水位＋強勢股方向轉弱，是需要提高警戒的組合。","後20日上漲率 48.4%，平均最大回撤約 -4.91%。","停止追價、汰弱留強、逐步保護獲利；不是要求一次清倉。"))
+    if signal_active(early_signal):
+        if w in {"極低水位","偏低水位"}:
+            notes.append(("🟢⭐ A級早期轉強","早期轉強發生在極低／偏低水位。","35個可計算20日事件平均 +2.02%、上漲率 74.3%；60日平均 +6.00%。","提高關注／分批試單；仍需個股條件，不是全市場無差別買進。"))
+        else:
+            notes.append(("🟢 B級早期轉強","早期轉強發生在正常水位。","96個20日事件平均 +1.03%、上漲率 65.6%；60日平均 +3.90%。","視為市場改善確認，不當成低檔大反轉等級。"))
+    if "左側減碼觀察" in a:
+        notes.append(("🟠 左側減碼觀察","代表回撤風險提高，不是預測市場一定下跌。","37次事件後20日平均仍 +1.37%，但下跌率 51.4%，平均最大回撤約 -4.06%。","停止追高、汰弱留強、分批保護獲利；不是全面清倉。"))
+    elif "高檔內部轉弱" in a:
+        notes.append(("🟡 高檔內部轉弱","Wade 偏弱，但 RS 趨勢尚未進入真正高檔轉弱。","25次事件後20日平均 +3.22%，80% 最後仍上漲。","降級為觀察，不直接減碼；等待第二項確認。"))
+    elif "強度快速降溫" in a:
+        notes.append(("🟡 強度快速降溫","Wade 分數快速回落，但常是強勢行情中的震盪。","97次事件後20日平均 +3.12%，上漲率 75.3%。","標示降溫而非轉空；不要因這個訊號單獨減碼。"))
+    elif "盤面廣度偏弱" in a:
+        notes.append(("🟡 盤面廣度偏弱","上漲家數與廣度偏弱，短期回撤風險增加。","152次事件後20日平均 +1.29%，上漲率 63.8%，平均最大回撤約 -3.80%。","停止追價、提高選股標準；需搭配高檔轉弱才升級風險。"))
+    return notes
 
 def signal_event_backtest(df, signal_col, price_col, mode="up", horizons=(5,10,20)):
     """以每一段訊號的第一天為事件日，計算後續指數報酬與區間最大回撤。
@@ -1471,7 +1559,7 @@ early_signal_stats=signal_streak_stats(daily,"早期轉強訊號")
 left_alert_show=signal_display(left_alert)
 early_signal_show=signal_display(early_signal)
 left_signal_phase=risk_signal_phase(left_alert,left_signal_stats,left_reduce_stats)
-early_signal_phase=early_signal_phase(early_signal_stats)
+early_signal_phase=wade_v2_early_label(water,early_signal,early_signal_stats)
 exposure_plan=market_exposure_plan(rs_latest,market_lr,quality,early_signal_stats,left_alert,left_reduce_stats)
 
 # ===== v3.2 單一儀表板：背景掃描 + 前台只讀快照 =====
@@ -2660,12 +2748,13 @@ with tabs[2]:
     with st.expander("歷史極值基準"): st.dataframe(extreme,hide_index=True,use_container_width=True)
 
 with tabs[3]:
-    st.subheader("Wade 式大盤內部強弱")
-    st.caption("v0.2：把 Wade 公開常看的市場內部概念量化；不是 Wade 官方公式。已納入量價效率、加權/等權同步、櫃買相對強弱與強勢股主流延續性；指數資料抓不到時會自動退回市場內部代理。")
+    st.subheader("Wade 式大盤內部強弱｜v2 歷史驗證版")
+    st.caption("分數公式仍沿用 Wade v0.2；v2 把 2018～2026 因果安全回測加入訊號分級、操作語意與完整註解。不是 Wade 官方公式，也不是報酬保證。")
     cards([
         ("市場內部強度",safe_num(wade_score,1," / 100"),wade_state),
-        ("風險／向上減碼",left_signal_phase,f"原始訊號：{left_alert_show}｜{signal_current_text(left_reduce_stats if risk_signal_level(left_alert)=="reduce" else left_signal_stats)}"),
-        ("早期轉強",early_signal_phase,f"原始訊號：{early_signal_show}｜{signal_current_text(early_signal_stats)}"),
+        ("RS方向分級",wade_v2_direction_label(direction),f"原始方向：{direction}"),
+        ("風險分級",wade_v2_risk_label(stage,left_alert),f"原始訊號：{left_alert_show}"),
+        ("早期轉強分級",early_signal_phase,f"原始訊號：{early_signal_show}｜水位：{water}"),
         ("上漲／下跌",f"{safe_num(advance_count,0)}／{safe_num(decline_count,0)}",f"上漲比例 {safe_num(advance_ratio,1,'%')}"),
         ("漲停／跌停*",f"{safe_num(limit_up,0)}／{safe_num(limit_down,0)}","*目前以單日報酬 ±9.5% 近似"),
         ("52週新高／新低",f"{safe_num(new_high,0)}／{safe_num(new_low,0)}","收盤價 250 交易日新高低"),
@@ -2676,14 +2765,44 @@ with tabs[3]:
         ("上市／上櫃等權",f"{safe_num(twse_mean_return,2,'%')}／{safe_num(tpex_mean_return,2,'%')}",f"櫃買相對 {safe_num(tpex_rel,1)}"),
         ("主流延續率",safe_num(leader_retention,1,"%"),f"新領頭股 {safe_num(new_leaders,0)}／延續分數 {safe_num(leadership_score,1)}"),
     ])
-    if risk_signal_level(left_alert)=="reduce":
-        st.warning(f"目前：{left_signal_phase}｜{left_alert}。屬向上減碼觀察：停止追高、汰弱留強、分批降低風險，不等於一次清倉。")
-    elif risk_signal_level(left_alert)=="watch":
-        st.warning(f"目前：{left_signal_phase}｜{left_alert}。這一級先視為風險升高觀察，優先停止擴大曝險，尚未等同正式減碼訊號。")
-    elif signal_active(early_signal):
-        st.success(f"目前：{early_signal_phase}｜{early_signal}。第1天視為初現，第2天視為確認，第3天以上視為持續轉強。")
+    # Wade v2：今天的解讀直接寫在畫面，不藏 tooltip，避免日後忘記。
+    st.write("### 📌 今日訊號怎麼讀")
+    current_notes=wade_v2_current_note(stage,direction,water,left_alert,early_signal)
+    if current_notes:
+        for title,meaning,history_note,action_note in current_notes:
+            st.markdown(f"**{title}**")
+            st.markdown(f"- **代表什麼：** {meaning}")
+            st.markdown(f"- **歷史結果：** {history_note}")
+            st.markdown(f"- **操作註解：** {action_note}")
     else:
-        st.info(f"目前狀態：{wade_state}。尚未觸發明確向上減碼或早期轉強訊號。")
+        st.info(f"目前市場階段：{stage}｜Wade：{wade_state}。今天沒有觸發需要額外分級的 Wade v2 特殊訊號。")
+
+    st.caption(f"📚 回測註解版本：{WADE_V2_RESEARCH_VERSION}。所有百分比都是歷史樣本統計，不代表未來必然發生。")
+
+    with st.expander("📖 Wade v2 完整訊號字典｜忘記時直接看這裡", expanded=False):
+        st.markdown("""
+**1｜🔥 A級向上＝明顯增加**：RS 強勢股短中期同步擴張。後20日平均約 **+2.43%**、上漲率 **71.7%**。**偏多持有／強股續抱，不等於追高。**
+
+**2｜↗️ B級向上＝增加**：市場廣度改善，但弱於明顯增加。後20日平均約 **+1.68%**、上漲率 **65.3%**。**仍需 Wade、上漲家數與價格確認。**
+
+**3｜🚀 高檔續強**：高水位但內部仍強。後20日平均 **+3.39%**、上漲率 **74.2%**；60日平均 **+8.30%**。**高水位本身不是賣出理由。**
+
+**4｜🔴 高檔轉弱**：高水位＋強勢股方向轉弱。後20日上漲率約 **48.4%**，平均最大回撤 **-4.91%**。**提高警戒、保護獲利，但不是一次清倉。**
+
+**5｜🟢⭐ A級早期轉強**：發生於極低／偏低水位。35個可計算20日事件平均 **+2.02%**、上漲率 **74.3%**。**可提高關注／分批試單。**
+
+**6｜🟢 B級早期轉強**：發生於正常水位。96個20日事件平均 **+1.03%**、上漲率 **65.6%**。**屬改善確認，不當成低檔大反轉。**
+
+**7｜🟠 左側減碼觀察**：代表回撤風險提高，不是預測一定下跌。37次事件後20日平均仍 **+1.37%**，下跌率約 **51.4%**，平均最大回撤 **-4.06%**。**停止追高、汰弱留強、分批保護；不是全面清倉。**
+
+**8｜🟡 高檔內部轉弱**：回測後降級為觀察。25次事件後20日平均 **+3.22%**，約 **80%** 最後仍上漲。**不可單獨當賣出訊號。**
+
+**9｜🟡 強度快速降溫**：97次事件後20日平均 **+3.12%**、上漲率 **75.3%**。**表示降溫，不等於趨勢轉空。**
+
+**10｜🟡 盤面廣度偏弱**：152次事件後20日平均 **+1.29%**、上漲率 **63.8%**，平均最大回撤約 **-3.80%**。**停止追價、提高選股標準；搭配高檔轉弱才升級。**
+
+**回測口徑**：2018-01-02～2026-08-21；D 日收盤確認，D+1 收盤才算第一個可交易基準。歷史統計不是未來保證。
+        """)
 
     st.write("**訊號持續天數／歷史常態**")
     cards([
@@ -2706,7 +2825,7 @@ with tabs[3]:
 
     wc=wade_chart(daily,180)
     if wc is not None: st.altair_chart(wc,use_container_width=True)
-    st.markdown("**目前 v0.2 分數組成**：上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。")
+    st.markdown("**Wade v2：分數公式仍是 v0.2**｜上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。v2 改的是歷史驗證後的訊號分級與註解，沒有偷偷改掉原始分數公式。")
     cols=[c for c in ["日期","Wade內部強度分數","Wade分數5日變化","Wade市場狀態","左側減碼警示","早期轉強訊號","上漲家數","下跌家數","上漲比例%","漲停近似家數","跌停近似家數","52週新高家數","52週新低家數","上市上漲比例%","上櫃上漲比例%","成交金額20日比%","加權指數報酬%","櫃買指數報酬%","上市等權平均報酬%","上櫃等權平均報酬%","主流延續率%","新強勢領頭股數","量價效率分數","權值同步分數","櫃買相對強弱分數","主流延續分數","市場總結白話","操作建議","市場階段","強勢股方向"] if c in daily.columns]
     if cols:
         hist_base=daily[cols].copy()
