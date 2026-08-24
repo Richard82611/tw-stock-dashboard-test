@@ -634,6 +634,375 @@ def wade_v3_prerisk_signal(daily):
         return {"等級":"yellow","標籤":"🟡 前導風險觀察","說明":f"右側5日下降 {right_drop:.1f} 分；歷史10日 precision約44%、覆蓋約70%，平均領先高檔轉弱約5.7日。先停止追價。"}
     return {"等級":"none","標籤":"✅ 未觸發前導風險","說明":f"高水位但右側5日變化 {right_drop:+.1f} 分，內部弱化{weak_n}/5項。"}
 
+
+# ============================================================================
+# Wade v3.1 市場導航實驗版
+# ---------------------------------------------------------------------------
+# 目的不是再增加一個技術指標，而是回答三個問題：
+# 1. 今天的市場內部結構，歷史上最像哪些交易日？
+# 2. 那些相似日之後，市場最常往哪個「下一個不同階段」走？
+# 3. 相似歷史樣本的 5/10/20/60 日報酬與 20 日回撤分布如何？
+#
+# 重要限制：
+# - 使用 rs_latest.xlsx 內「目前可用的正式每日歷史」即時計算；歷史越長越可靠。
+# - D 日收盤才知道今天狀態；報酬統計一律由 D+1 收盤開始，避免偷看未來。
+# - 相似度只代表「結構像」，不是因果，也不是保證之後一定重演。
+# - 為避免同一波行情連續十幾天霸占樣本，最相似日期會盡量保持至少10個交易日間隔。
+# - 族群擴散/觀察類股雷達尚未啟用：目前 repo 缺可回溯的正式產業/概念族群歷史快照，
+#   不用「主流延續分數」冒充 Wade 所說的觀察類股。
+# ============================================================================
+
+WADE_NAV_VERSION = "v3.1｜歷史相似日＋下一階段機率｜D+1起算"
+
+
+def _nav_dir_code(v):
+    return {
+        "明顯減少": -2.0, "減少": -1.0, "持平": 0.0,
+        "增加": 1.0, "明顯增加": 2.0,
+    }.get(text(v, ""), 0.0)
+
+
+def _nav_water_code(v):
+    return {
+        "極低水位": 0.0, "偏低水位": 1.0, "正常水位": 2.0,
+        "偏高水位": 3.0, "極高水位": 4.0,
+    }.get(text(v, ""), 2.0)
+
+
+def _nav_first_col(df, names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+
+def _nav_mean(xs):
+    z = [float(x) for x in xs if x is not None and math.isfinite(float(x))]
+    return sum(z) / len(z) if z else None
+
+
+def _nav_median(xs):
+    z = sorted(float(x) for x in xs if x is not None and math.isfinite(float(x)))
+    if not z:
+        return None
+    n = len(z)
+    return z[n//2] if n % 2 else (z[n//2-1] + z[n//2]) / 2
+
+
+def _nav_pct_positive(xs):
+    z = [float(x) for x in xs if x is not None and math.isfinite(float(x))]
+    return 100.0 * sum(x > 0 for x in z) / len(z) if z else None
+
+
+def wade_market_navigation(daily, top_n=20, min_history=120):
+    """依目前正式每日歷史，建立『歷史相似日＋下一階段機率』。
+
+    相似度使用市場內部特徵的標準化距離；權重固定，不做事後最佳化。
+    回傳的 forward return 統一採 D+1 收盤起算。
+    """
+    if daily is None or len(daily) < min_history:
+        return {
+            "ok": False,
+            "reason": f"正式歷史目前只有 {0 if daily is None else len(daily)} 個交易日；至少需要 {min_history} 日。",
+        }
+
+    x = daily.copy().reset_index(drop=True)
+    date_col = _nav_first_col(x, ["日期", "date"])
+    stage_col = _nav_first_col(x, ["市場階段", "Wade市場狀態", "market_state"])
+    price_col = _nav_first_col(x, ["加權指數收盤", "twii_close"])
+
+    if date_col:
+        x[date_col] = pd.to_datetime(x[date_col], errors="coerce")
+
+    # 兩個可比較的衍生特徵。
+    if "強勢股方向" in x.columns:
+        x["_nav_direction"] = x["強勢股方向"].map(_nav_dir_code)
+    elif "direction" in x.columns:
+        x["_nav_direction"] = x["direction"].map(_nav_dir_code)
+
+    if "歷史水位" in x.columns:
+        x["_nav_water"] = x["歷史水位"].map(_nav_water_code)
+    elif "water" in x.columns:
+        x["_nav_water"] = x["water"].map(_nav_water_code)
+
+    nh_col = _nav_first_col(x, ["52週新高家數", "new_high_count"])
+    nl_col = _nav_first_col(x, ["52週新低家數", "new_low_count"])
+    if nh_col and nl_col:
+        nh = pd.to_numeric(x[nh_col], errors="coerce")
+        nl = pd.to_numeric(x[nl_col], errors="coerce")
+        x["_nav_highlow_balance"] = (nh - nl) / (nh + nl + 20.0) * 100.0
+
+    feature_specs = [
+        (["Wade內部強度分數", "wade_score"], 2.00),
+        (["Wade分數5日變化", "wade_score_change5"], 1.10),
+        (["上漲比例%", "advance_ratio"], 1.45),
+        (["上市上漲比例%", "twse_advance_ratio"], 0.75),
+        (["上櫃上漲比例%", "tpex_advance_ratio"], 0.85),
+        (["量價效率分數", "volume_efficiency_score"], 0.75),
+        (["權值同步分數", "index_sync_score"], 0.75),
+        (["櫃買相對強弱分數", "tpex_relative_score"], 0.55),
+        (["主流延續分數", "leadership_score"], 0.95),
+        (["5日-20日廣度差", "breadth_5_20_spread"], 0.95),
+        (["_nav_highlow_balance"], 0.85),
+        (["_nav_direction"], 0.90),
+        (["_nav_water"], 0.80),
+    ]
+
+    features = []
+    for names, weight in feature_specs:
+        col = _nav_first_col(x, names)
+        if not col:
+            continue
+        s = pd.to_numeric(x[col], errors="coerce")
+        if s.notna().sum() < max(60, min_history // 2):
+            continue
+        cur = _num(s.iloc[-1])
+        if cur is None:
+            continue
+        # 使用歷史標準差做尺度；距離會裁切，避免單一極端值把相似度全部壓垮。
+        hist = s.iloc[:-1].dropna()
+        scale = float(hist.std(ddof=0)) if len(hist) >= 2 else 0.0
+        if not math.isfinite(scale) or scale < 1e-9:
+            q75, q25 = hist.quantile(.75), hist.quantile(.25)
+            scale = float(q75 - q25) / 1.349 if pd.notna(q75) and pd.notna(q25) else 0.0
+        if not math.isfinite(scale) or scale < 1e-9:
+            continue
+        features.append((col, weight, cur, scale))
+
+    if len(features) < 5:
+        return {"ok": False, "reason": f"可比較特徵只有 {len(features)} 項，暫不足以建立可靠相似日。"}
+
+    total_weight = sum(w for _, w, _, _ in features)
+    candidates = []
+    # 最後一列視為「今天」，不把今天自己拿來當相似日。
+    for i in range(len(x) - 1):
+        d2 = 0.0
+        used = 0.0
+        used_n = 0
+        for col, weight, cur, scale in features:
+            val = _num(x.iloc[i].get(col))
+            if val is None:
+                continue
+            z = (val - cur) / scale
+            # 對極端差異裁切，避免少數單一欄位支配全部距離。
+            z = max(-3.0, min(3.0, z))
+            d2 += weight * z * z
+            used += weight
+            used_n += 1
+        if used_n < 5 or used <= 0:
+            continue
+        avg_d2 = d2 / used
+        coverage = used / total_weight if total_weight else 0
+        similarity = 100.0 * math.exp(-0.5 * avg_d2) * (0.85 + 0.15 * coverage)
+        candidates.append((i, similarity, used_n))
+
+    if len(candidates) < 8:
+        return {"ok": False, "reason": "可用歷史相似樣本不足8筆。"}
+
+    candidates.sort(key=lambda z: z[1], reverse=True)
+
+    # 避免同一段連續行情把20個名額全部占滿。
+    selected = []
+    for gap in (10, 5, 0):
+        for item in candidates:
+            i = item[0]
+            if any(i == q[0] for q in selected):
+                continue
+            if gap and any(abs(i - q[0]) < gap for q in selected):
+                continue
+            selected.append(item)
+            if len(selected) >= top_n:
+                break
+        if len(selected) >= top_n:
+            break
+    selected = selected[:top_n]
+
+    # 當前狀態已連續幾天。
+    current_stage = text(x.iloc[-1].get(stage_col), "—") if stage_col else "—"
+    current_stage_days = 1
+    if stage_col and current_stage != "—":
+        for j in range(len(x) - 2, -1, -1):
+            if text(x.iloc[j].get(stage_col), "—") == current_stage:
+                current_stage_days += 1
+            else:
+                break
+
+    def forward_ret(i, h):
+        if not price_col:
+            return None
+        p = pd.to_numeric(x[price_col], errors="coerce")
+        entry_i = i + 1
+        exit_i = entry_i + h
+        if entry_i >= len(p) or exit_i >= len(p):
+            return None
+        a = _num(p.iloc[entry_i]); b = _num(p.iloc[exit_i])
+        if a is None or b is None or a <= 0:
+            return None
+        return (b / a - 1.0) * 100.0
+
+    def path_20(i):
+        if not price_col:
+            return []
+        p = pd.to_numeric(x[price_col], errors="coerce")
+        entry_i = i + 1
+        if entry_i >= len(p):
+            return []
+        a = _num(p.iloc[entry_i])
+        if a is None or a <= 0:
+            return []
+        out = []
+        for day in range(0, 21):
+            j = entry_i + day
+            if j >= len(p):
+                break
+            b = _num(p.iloc[j])
+            if b is None:
+                continue
+            out.append((day, (b / a - 1.0) * 100.0))
+        return out
+
+    analog_rows = []
+    next_counts = {}
+    next_delays = {}
+    ret_by_h = {5: [], 10: [], 20: [], 60: []}
+    mae20 = []
+    mfe20 = []
+    paths = []
+
+    pseries = pd.to_numeric(x[price_col], errors="coerce") if price_col else None
+
+    for rank, (i, sim, feature_n) in enumerate(selected, start=1):
+        r = x.iloc[i]
+        analog_stage = text(r.get(stage_col), "—") if stage_col else "—"
+
+        nxt = None
+        delay = None
+        if stage_col:
+            for d in range(1, 11):
+                j = i + d
+                if j >= len(x):
+                    break
+                stg = text(x.iloc[j].get(stage_col), "—")
+                if stg != "—" and stg != analog_stage:
+                    nxt = stg
+                    delay = d
+                    break
+        if nxt:
+            next_counts[nxt] = next_counts.get(nxt, 0) + 1
+            next_delays.setdefault(nxt, []).append(delay)
+
+        perfs = {}
+        for h in (5, 10, 20, 60):
+            rr = forward_ret(i, h)
+            perfs[h] = rr
+            if rr is not None:
+                ret_by_h[h].append(rr)
+
+        if pseries is not None and i + 21 < len(x):
+            entry_i = i + 1
+            a = _num(pseries.iloc[entry_i])
+            if a is not None and a > 0:
+                vals = [_num(v) for v in pseries.iloc[entry_i:entry_i+21].tolist()]
+                vals = [v for v in vals if v is not None]
+                if vals:
+                    mfe20.append((max(vals) / a - 1.0) * 100.0)
+                    mae20.append((min(vals) / a - 1.0) * 100.0)
+
+        if rank <= 10:
+            for day, rr in path_20(i):
+                paths.append({
+                    "交易日": day,
+                    "報酬%": rr,
+                    "相似日": (
+                        pd.to_datetime(r.get(date_col)).strftime("%Y-%m-%d")
+                        if date_col and pd.notna(r.get(date_col))
+                        else f"歷史#{i}"
+                    ),
+                })
+
+        analog_rows.append({
+            "排名": rank,
+            "歷史日期": (
+                pd.to_datetime(r.get(date_col)).strftime("%Y-%m-%d")
+                if date_col and pd.notna(r.get(date_col))
+                else f"歷史#{i}"
+            ),
+            "相似度": round(sim, 1),
+            "當時階段": analog_stage,
+            "下一不同階段": nxt or "10日內未轉換",
+            "轉換天數": delay,
+            "後5日%": round(perfs[5], 2) if perfs[5] is not None else None,
+            "後10日%": round(perfs[10], 2) if perfs[10] is not None else None,
+            "後20日%": round(perfs[20], 2) if perfs[20] is not None else None,
+            "使用特徵數": feature_n,
+        })
+
+    next_total = sum(next_counts.values())
+    next_table = []
+    for stg, count in sorted(next_counts.items(), key=lambda kv: kv[1], reverse=True):
+        next_table.append({
+            "下一階段": stg,
+            "相似樣本數": count,
+            "機率%": round(100.0 * count / next_total, 1) if next_total else None,
+            "中位轉換日": round(_nav_median(next_delays.get(stg, [])), 1) if next_delays.get(stg) else None,
+        })
+
+    avg_sim = _nav_mean([q[1] for q in selected]) or 0.0
+    top_prob = next_table[0]["機率%"] if next_table else 0.0
+    n_score = min(100.0, len(selected) / max(1, top_n) * 100.0)
+    confidence = 0.45 * avg_sim + 0.25 * n_score + 0.30 * (top_prob or 0.0)
+    confidence = max(0.0, min(100.0, confidence))
+    confidence_label = (
+        "高" if confidence >= 75 else
+        "中高" if confidence >= 65 else
+        "中" if confidence >= 52 else
+        "偏低"
+    )
+
+    return {
+        "ok": True,
+        "version": WADE_NAV_VERSION,
+        "history_days": len(x),
+        "feature_count": len(features),
+        "current_stage": current_stage,
+        "current_stage_days": current_stage_days,
+        "analog_count": len(selected),
+        "avg_similarity": round(avg_sim, 1),
+        "confidence": round(confidence, 1),
+        "confidence_label": confidence_label,
+        "next_table": pd.DataFrame(next_table),
+        "analogs": pd.DataFrame(analog_rows),
+        "paths": pd.DataFrame(paths),
+        "ret_stats": {
+            h: {
+                "樣本": len(ret_by_h[h]),
+                "平均%": _nav_mean(ret_by_h[h]),
+                "中位%": _nav_median(ret_by_h[h]),
+                "上漲率%": _nav_pct_positive(ret_by_h[h]),
+            }
+            for h in (5, 10, 20, 60)
+        },
+        "mae20": _nav_mean(mae20),
+        "mfe20": _nav_mean(mfe20),
+    }
+
+
+def wade_navigation_path_chart(nav):
+    """畫出最相似10個歷史樣本，從D+1起算的20交易日路徑。"""
+    if not nav or not nav.get("ok"):
+        return None
+    p = nav.get("paths")
+    if p is None or p.empty:
+        return None
+    base = alt.Chart(p).mark_line(opacity=.42).encode(
+        x=alt.X("交易日:Q", title="D+1 起算後交易日"),
+        y=alt.Y("報酬%:Q", title="相對 D+1 收盤報酬%"),
+        detail="相似日:N",
+        tooltip=["相似日:N", "交易日:Q", alt.Tooltip("報酬%:Q", format=".2f")],
+    )
+    zero = alt.Chart(pd.DataFrame({"y":[0]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
+    return (base + zero).properties(height=310)
+
 def signal_event_backtest(df, signal_col, price_col, mode="up", horizons=(5,10,20)):
     """以每一段訊號的第一天為事件日，計算後續指數報酬與區間最大回撤。
     mode='up'：成功定義為期末報酬 > 0；mode='down'：成功定義為期末報酬 < 0。
@@ -1600,6 +1969,7 @@ early_signal_phase=wade_v2_early_label(water,early_signal,early_signal_stats)
 exposure_plan=market_exposure_plan(rs_latest,market_lr,quality,early_signal_stats,left_alert,left_reduce_stats)
 market_regime_current=wade_v3_market_regime(rs_latest)
 pre_risk_info=wade_v3_prerisk_signal(daily)
+market_nav=wade_market_navigation(daily)
 if signal_active(early_signal) and water not in {"極低水位","偏低水位"} and market_regime_current.startswith("🔴"):
     early_signal_phase="🟡 B級空頭降級｜只觀察"
 
@@ -2789,8 +3159,8 @@ with tabs[2]:
     with st.expander("歷史極值基準"): st.dataframe(extreme,hide_index=True,use_container_width=True)
 
 with tabs[3]:
-    st.subheader("Wade 式大盤內部強弱｜v3 綜合回測校準版")
-    st.caption("分數公式仍沿用 Wade v0.2；v3 已加入2018～2026生命週期、早期轉強市場環境、Wade門檻、左右側、前導風險與曝險配置回測。不是 Wade 官方公式，也不是報酬保證。")
+    st.subheader("Wade 式大盤內部強弱｜v3.1 市場導航實驗版")
+    st.caption("v3.1 在既有2018～2026綜合回測校準上，新增『歷史相似日＋下一階段機率＋相似路徑』。不是 Wade 官方公式，也不是報酬保證；相似歷史只代表結構近似，不代表一定重演。")
     cards([
         ("市場內部強度",safe_num(wade_score,1," / 100"),wade_state),
         ("市場環境",market_regime_current,"用加權MA60位置＋斜率分類；只調整訊號解讀"),
@@ -2808,6 +3178,42 @@ with tabs[3]:
         ("上市／上櫃等權",f"{safe_num(twse_mean_return,2,'%')}／{safe_num(tpex_mean_return,2,'%')}",f"櫃買相對 {safe_num(tpex_rel,1)}"),
         ("主流延續率",safe_num(leader_retention,1,"%"),f"新領頭股 {safe_num(new_leaders,0)}／延續分數 {safe_num(leadership_score,1)}"),
     ])
+
+    st.write("### 🧭 市場導航｜今天像什麼？下一步可能去哪？")
+    if market_nav.get("ok"):
+        nxt=market_nav.get("next_table")
+        top_next = "樣本分散"
+        top_next_note = "10日內沒有足夠一致的下一階段"
+        if nxt is not None and not nxt.empty:
+            top_next = f"{text(nxt.iloc[0].get('下一階段'),'—')}｜{safe_num(nxt.iloc[0].get('機率%'),1,'%')}"
+            top_next_note = f"相似歷史的第一個不同階段；中位約 {safe_num(nxt.iloc[0].get('中位轉換日'),1,' 日')}"
+
+        r20=market_nav.get("ret_stats",{}).get(20,{})
+        cards([
+            ("導航可信度",f"{safe_num(market_nav.get('confidence'),1,' / 100')}｜{market_nav.get('confidence_label','—')}",f"{market_nav.get('analog_count',0)}個去群聚相似樣本／{market_nav.get('feature_count',0)}項特徵"),
+            ("目前生命週期",f"{market_nav.get('current_stage','—')}｜第{market_nav.get('current_stage_days',1)}天",f"正式每日歷史 {market_nav.get('history_days',0)} 個交易日"),
+            ("最可能下一階段",top_next,top_next_note),
+            ("相似日20日中位",safe_num(r20.get("中位%"),2,"%"),f"上漲率 {safe_num(r20.get('上漲率%'),1,'%')}｜樣本 {r20.get('樣本',0)}"),
+            ("20日平均MFE",safe_num(market_nav.get("mfe20"),2,"%"),"相似歷史由D+1收盤起算的平均最大上漲空間"),
+            ("20日平均MAE",safe_num(market_nav.get("mae20"),2,"%"),"相似歷史由D+1收盤起算的平均最大回撤"),
+        ])
+
+        if nxt is not None and not nxt.empty:
+            st.markdown("**相似歷史的下一階段分布（10個交易日內第一個不同狀態）**")
+            st.dataframe(nxt,hide_index=True,use_container_width=True,height=min(260,70+36*len(nxt)))
+
+        nav_chart=wade_navigation_path_chart(market_nav)
+        if nav_chart is not None:
+            st.altair_chart(nav_chart,use_container_width=True)
+            st.caption("上圖為最相似10個歷史樣本的實際20日路徑；用一束路徑呈現分散程度，比只看平均報酬更容易看出風險。")
+
+        with st.expander("🔎 查看最相似的歷史日期與後續結果", expanded=False):
+            st.dataframe(market_nav["analogs"],hide_index=True,use_container_width=True,height=520)
+            st.caption("相似度採固定權重的市場內部特徵標準化距離；為避免同一波行情重複灌票，優先讓相似日期至少相隔10個交易日。")
+        st.caption(f"🧪 {market_nav.get('version')}。這是條件式歷史參考，不是機率預言；導航可信度低時應回到市場狀態、Wade、右側與個股風控本身。")
+    else:
+        st.info(f"市場導航暫未啟用：{market_nav.get('reason','歷史資料不足')}")
+    st.caption("🏷️ 族群擴散／Wade『觀察類股』雷達暫不硬做：目前 repo 沒有可回溯的正式產業／概念族群歷史快照，因此不以『主流延續分數』冒充觀察類股。")
     # Wade v2：今天的解讀直接寫在畫面，不藏 tooltip，避免日後忘記。
     st.write("### 📌 今日訊號怎麼讀")
     current_notes=wade_v2_current_note(stage,direction,water,left_alert,early_signal)
@@ -2876,7 +3282,7 @@ with tabs[3]:
 
     wc=wade_chart(daily,180)
     if wc is not None: st.altair_chart(wc,use_container_width=True)
-    st.markdown("**Wade v3：分數公式仍是 v0.2**｜上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。v3 沒有最佳化原始分數權重；本次只校準「怎麼解讀分數、生命週期、左右側與曝險」，避免為歷史資料過度擬合。")
+    st.markdown("**Wade v3.1：分數公式仍是 v0.2**｜上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。v3 沒有最佳化原始分數權重；本次只校準「怎麼解讀分數、生命週期、左右側與曝險」，避免為歷史資料過度擬合。")
     cols=[c for c in ["日期","Wade內部強度分數","Wade分數5日變化","Wade市場狀態","左側減碼警示","早期轉強訊號","上漲家數","下跌家數","上漲比例%","漲停近似家數","跌停近似家數","52週新高家數","52週新低家數","上市上漲比例%","上櫃上漲比例%","成交金額20日比%","加權指數報酬%","櫃買指數報酬%","上市等權平均報酬%","上櫃等權平均報酬%","主流延續率%","新強勢領頭股數","量價效率分數","權值同步分數","櫃買相對強弱分數","主流延續分數","市場總結白話","操作建議","市場階段","強勢股方向"] if c in daily.columns]
     if cols:
         hist_base=daily[cols].copy()
