@@ -1003,6 +1003,254 @@ def wade_navigation_path_chart(nav):
     zero = alt.Chart(pd.DataFrame({"y":[0]})).mark_rule(strokeDash=[4,4]).encode(y="y:Q")
     return (base + zero).properties(height=310)
 
+
+# ============================================================================
+# Wade v3.2 證據分層決策
+# ---------------------------------------------------------------------------
+# 核心原則：
+# 1. 永遠先有「客觀狀態結論」；沒有歷史樣本不等於市場沒有狀態。
+# 2. 歷史推論採逐級放寬：精確條件 -> 核心條件 -> 階段+環境 -> 階段 -> 環境 -> 全市場。
+# 3. 歷史樣本不足時只降低證據等級，不把「資料不足」誤寫成中性或看空。
+# 4. 操作建議仍只沿用已回測的 Wade v3 規則與曝險基準；證據梯不自行發明新買賣點。
+# 5. 所有報酬由 D+1 收盤開始；歷史樣本去群聚，降低同一段行情重複灌票。
+# 6. 「歷史偏正向/偏弱」只是相對全期基準的描述標籤，不是新的交易訊號。
+# ============================================================================
+
+WADE_EVIDENCE_VERSION = "v3.2｜證據梯＋永遠有結論｜D+1起算"
+
+
+def _evidence_regime_plain(row):
+    s = text(wade_v3_market_regime(row), "資料不足")
+    if "多頭" in s: return "多頭"
+    if "空頭" in s: return "空頭"
+    if "轉折" in s or "震盪" in s: return "轉折/震盪"
+    return "資料不足"
+
+
+def _evidence_decluster(indices, gap=5):
+    """以交易日索引去群聚。保留第一個符合日，之後至少隔 gap 個交易日。"""
+    out=[]
+    last=None
+    for i in sorted(set(int(x) for x in indices)):
+        if last is None or i-last >= gap:
+            out.append(i); last=i
+    return out
+
+
+def _evidence_forward_return(price, i, horizon):
+    """D日條件，D+1收盤進入；horizon日後收盤出場。"""
+    entry=i+1; exit_i=entry+horizon
+    if entry>=len(price) or exit_i>=len(price): return None
+    a=_num(price.iloc[entry]); b=_num(price.iloc[exit_i])
+    if a is None or b is None or a<=0: return None
+    return (b/a-1.0)*100.0
+
+
+def _evidence_path20(price, i):
+    entry=i+1; end=entry+20
+    if entry>=len(price) or end>=len(price): return []
+    a=_num(price.iloc[entry])
+    if a is None or a<=0: return []
+    z=[]
+    for j in range(entry,end+1):
+        b=_num(price.iloc[j])
+        if b is not None: z.append((b/a-1.0)*100.0)
+    return z
+
+
+def _evidence_stats(x, idxs, price_col, date_col=None):
+    price=pd.to_numeric(x[price_col],errors="coerce")
+    result={"樣本":len(idxs),"年度數":0,"年度正中位數":0,"年度有效數":0}
+    if date_col:
+        years=[]
+        for i in idxs:
+            try:
+                d=pd.to_datetime(x.iloc[i].get(date_col),errors="coerce")
+                if pd.notna(d): years.append(int(d.year))
+            except Exception: pass
+        result["年度數"]=len(set(years))
+    all_ret={5:[],10:[],20:[],60:[]}; mfe=[]; mae=[]
+    for i in idxs:
+        for h in all_ret:
+            r=_evidence_forward_return(price,i,h)
+            if r is not None: all_ret[h].append(r)
+        path=_evidence_path20(price,i)
+        if path:
+            mfe.append(max(path)); mae.append(min(path))
+    for h,vals in all_ret.items():
+        result[f"n{h}"]=len(vals)
+        result[f"中位{h}%"]=_nav_median(vals)
+        result[f"平均{h}%"]=_nav_mean(vals)
+        result[f"上漲率{h}%"]=_nav_pct_positive(vals)
+    result["平均MFE20%"]=_nav_mean(mfe)
+    result["平均MAE20%"]=_nav_mean(mae)
+
+    # 年度穩定性只針對20日；每年先取中位數，避免單一年大量樣本主宰。
+    if date_col:
+        by_year={}
+        for i in idxs:
+            r=_evidence_forward_return(price,i,20)
+            if r is None: continue
+            try:
+                d=pd.to_datetime(x.iloc[i].get(date_col),errors="coerce")
+                if pd.isna(d): continue
+                by_year.setdefault(int(d.year),[]).append(r)
+            except Exception: pass
+        medians=[_nav_median(v) for v in by_year.values() if v]
+        medians=[v for v in medians if v is not None]
+        result["年度有效數"]=len(medians)
+        result["年度正中位數"]=sum(v>0 for v in medians)
+        result["年度正向率%"]=(100.0*result["年度正中位數"]/len(medians)) if medians else None
+    return result
+
+
+def _evidence_grade(tier_rank, stats):
+    """證據等級不是預測準確率，只反映樣本/跨年/條件專一度。"""
+    n=int(stats.get("n20") or 0); years=int(stats.get("年度有效數") or stats.get("年度數") or 0)
+    if n>=40 and years>=5 and tier_rank<=3: return "A｜較完整"
+    if n>=25 and years>=3 and tier_rank<=4: return "B｜可參考"
+    if n>=12 and years>=2: return "C｜有限"
+    return "D｜基礎參考"
+
+
+def _evidence_tendency(stats, baseline):
+    """只做描述性標籤：與全期基準相比，不直接驅動操作。"""
+    n=int(stats.get("n20") or 0)
+    med=_num(stats.get("中位20%")); win=_num(stats.get("上漲率20%"))
+    bmed=_num(baseline.get("中位20%")); bwin=_num(baseline.get("上漲率20%"))
+    if n<8 or med is None or win is None or bmed is None or bwin is None:
+        return "⚪ 歷史樣本不足｜不額外推論"
+    edge=med-bmed; wedge=win-bwin
+    if edge>=1.0 and wedge>=5.0: return "🟢 歷史相對偏正向"
+    if edge<=-1.0 and wedge<=-5.0: return "🔴 歷史相對偏弱"
+    return "🟡 歷史接近基準／分歧"
+
+
+def wade_evidence_ladder(daily, current_row):
+    """逐級放寬歷史條件；盡量提供證據，但永遠不取代客觀狀態結論。"""
+    state=text(first_value(current_row,["市場階段"]),"—")
+    regime=_evidence_regime_plain(current_row)
+    current_lr=market_lr_assessment(current_row)
+    wade=_num(first_value(current_row,["Wade內部強度分數"]),50) or 50
+    right=_num(current_lr.get("右側分數"),0) or 0
+    direction=text(first_value(current_row,["強勢股方向"]),"—")
+
+    # 狀態結論永遠可產生，不依賴回測樣本。
+    state_text=f"{market_signal(state)}｜{stage_plain(state)}" if state!="—" else "市場階段資料不足"
+    base={
+        "ok":False,"state":state,"regime":regime,"state_conclusion":state_text,
+        "tier":"無可用歷史","tier_rank":99,"grade":"D｜基礎參考",
+        "tendency":"⚪ 尚無可用歷史推論","stats":{},"baseline":{},"candidates":[],
+        "current_wade":wade,"current_right":right,"current_direction":direction,
+    }
+    if daily is None or daily.empty:
+        base["reason"]="正式每日歷史尚未建立；仍保留目前市場階段與既有操作規則。"
+        return base
+
+    x=daily.copy().reset_index(drop=True)
+    date_col=_nav_first_col(x,["日期","date"])
+    price_col=_nav_first_col(x,["加權指數收盤","twii_close"])
+    stage_col=_nav_first_col(x,["市場階段","Wade市場狀態","market_state"])
+    if not price_col or not stage_col:
+        base["reason"]="歷史檔缺加權指數收盤或市場階段；不估未來報酬，但仍保留客觀狀態結論。"
+        return base
+    if date_col: x[date_col]=pd.to_datetime(x[date_col],errors="coerce")
+
+    # 預先建立每一天的可比較欄位。最後一天是現在，不當成歷史樣本。
+    hist=[]
+    for i in range(max(0,len(x)-1)):
+        row=x.iloc[i]
+        st=text(first_value(row,[stage_col]),"—")
+        rg=_evidence_regime_plain(row)
+        ww=_num(first_value(row,["Wade內部強度分數"]),50) or 50
+        try: rr=_num(market_lr_assessment(row).get("右側分數"),0) or 0
+        except Exception: rr=0
+        dd=text(first_value(row,["強勢股方向"]),"—")
+        hist.append({"i":i,"stage":st,"regime":rg,"wade":ww,"right":rr,"direction":dd})
+
+    # 六級證據梯。前三級是「條件式歷史」，後三級是保底歷史基準。
+    tiers=[
+        (1,"① 精確條件",lambda h: h["stage"]==state and h["regime"]==regime and abs(h["wade"]-wade)<=10 and abs(h["right"]-right)<=10 and h["direction"]==direction),
+        (2,"② 核心條件",lambda h: h["stage"]==state and h["regime"]==regime and abs(h["wade"]-wade)<=10),
+        (3,"③ 階段＋環境",lambda h: h["stage"]==state and h["regime"]==regime),
+        (4,"④ 同市場階段",lambda h: h["stage"]==state),
+        (5,"⑤ 同市場環境",lambda h: h["regime"]==regime and regime!="資料不足"),
+        (6,"⑥ 全市場歷史",lambda h: True),
+    ]
+
+    tier_rows=[]
+    for rank,label,fn in tiers:
+        raw=[h["i"] for h in hist if fn(h)]
+        idx=_evidence_decluster(raw,gap=5)
+        st=_evidence_stats(x,idx,price_col,date_col)
+        tier_rows.append({"rank":rank,"label":label,"idx":idx,"stats":st})
+
+    baseline=tier_rows[-1]["stats"]
+    # 優先挑第一個「20日樣本>=25且至少3個年度」；若沒有就依12/5樣本逐級退。
+    selected=None
+    for min_n,min_year in [(25,3),(12,2),(5,1),(1,0)]:
+        for t in tier_rows:
+            n=int(t["stats"].get("n20") or 0); y=int(t["stats"].get("年度有效數") or 0)
+            if n>=min_n and y>=min_year:
+                selected=t; break
+        if selected is not None: break
+    if selected is None: selected=tier_rows[-1]
+
+    stats=selected["stats"]
+    grade=_evidence_grade(selected["rank"],stats)
+    tendency=_evidence_tendency(stats,baseline)
+
+    # 提供每一層有多少樣本，讓使用者知道系統有沒有被迫放寬。
+    candidate_table=[]
+    for t in tier_rows:
+        s=t["stats"]
+        candidate_table.append({
+            "證據層":t["label"],"20日樣本":int(s.get("n20") or 0),
+            "年度":int(s.get("年度有效數") or 0),
+            "20日中位%":round(s.get("中位20%"),2) if s.get("中位20%") is not None else None,
+            "20日上漲率%":round(s.get("上漲率20%"),1) if s.get("上漲率20%") is not None else None,
+            "採用":"✓" if t is selected else "",
+        })
+
+    return {
+        "ok":True,"version":WADE_EVIDENCE_VERSION,
+        "state":state,"regime":regime,"state_conclusion":state_text,
+        "tier":selected["label"],"tier_rank":selected["rank"],"grade":grade,
+        "tendency":tendency,"stats":stats,"baseline":baseline,
+        "candidates":pd.DataFrame(candidate_table),
+        "current_wade":wade,"current_right":right,"current_direction":direction,
+        "reason":"採逐級放寬；證據不足只降低等級，不取消今天的狀態結論。",
+    }
+
+
+def wade_daily_change_explainer(daily):
+    """純描述今天比昨天變了什麼；不把變化方向自動當成買賣證據。"""
+    if daily is None or len(daily)<2: return ["前日比較資料不足"]
+    cur=daily.iloc[-1]; prev=daily.iloc[-2]
+    rows=[]
+    specs=[
+        ("Wade內部強度分數","Wade","分",1),
+        ("強勢股檔數","RS強勢股","檔",0),
+        ("上漲比例%","上漲比例","pct",1),
+        ("52週新高家數","250日新高","檔",0),
+        ("52週新低家數","250日新低","檔",0),
+        ("主流延續率%","主流延續率","pct",1),
+    ]
+    for col,label,unit,digits in specs:
+        if col not in daily.columns: continue
+        a=_num(cur.get(col)); b=_num(prev.get(col))
+        if a is None or b is None: continue
+        d=a-b
+        rows.append((abs(d),f"{label} {d:+.{digits}f}{unit}"))
+    # 右側分數不是原始欄位，現算昨天/今天。
+    try:
+        r1=_num(market_lr_assessment(cur).get("右側分數")); r0=_num(market_lr_assessment(prev).get("右側分數"))
+        if r1 is not None and r0 is not None:
+            rows.append((abs(r1-r0),f"右側分數 {r1-r0:+.1f}分"))
+    except Exception: pass
+    rows.sort(key=lambda z:z[0],reverse=True)
+    return [z[1] for z in rows[:5]] if rows else ["可比較欄位不足"]
+
 def signal_event_backtest(df, signal_col, price_col, mode="up", horizons=(5,10,20)):
     """以每一段訊號的第一天為事件日，計算後續指數報酬與區間最大回撤。
     mode='up'：成功定義為期末報酬 > 0；mode='down'：成功定義為期末報酬 < 0。
@@ -1970,6 +2218,8 @@ exposure_plan=market_exposure_plan(rs_latest,market_lr,quality,early_signal_stat
 market_regime_current=wade_v3_market_regime(rs_latest)
 pre_risk_info=wade_v3_prerisk_signal(daily)
 market_nav=wade_market_navigation(daily)
+evidence_ladder=wade_evidence_ladder(daily,rs_latest)
+daily_change_evidence=wade_daily_change_explainer(daily)
 if signal_active(early_signal) and water not in {"極低水位","偏低水位"} and market_regime_current.startswith("🔴"):
     early_signal_phase="🟡 B級空頭降級｜只觀察"
 
@@ -3159,8 +3409,8 @@ with tabs[2]:
     with st.expander("歷史極值基準"): st.dataframe(extreme,hide_index=True,use_container_width=True)
 
 with tabs[3]:
-    st.subheader("Wade 式大盤內部強弱｜v3.1 市場導航實驗版")
-    st.caption("v3.1 在既有2018～2026綜合回測校準上，新增『歷史相似日＋下一階段機率＋相似路徑』。不是 Wade 官方公式，也不是報酬保證；相似歷史只代表結構近似，不代表一定重演。")
+    st.subheader("Wade 式大盤內部強弱｜v3.2 證據分層決策版")
+    st.caption("v3.2 保留v3.1歷史相似日，新增『永遠有狀態結論＋歷史證據逐級放寬』。沒有足夠歷史樣本時只降低證據等級，不會把市場硬判成沒有結論；操作仍只沿用已回測的v3規則。")
     cards([
         ("市場內部強度",safe_num(wade_score,1," / 100"),wade_state),
         ("市場環境",market_regime_current,"用加權MA60位置＋斜率分類；只調整訊號解讀"),
@@ -3178,6 +3428,31 @@ with tabs[3]:
         ("上市／上櫃等權",f"{safe_num(twse_mean_return,2,'%')}／{safe_num(tpex_mean_return,2,'%')}",f"櫃買相對 {safe_num(tpex_rel,1)}"),
         ("主流延續率",safe_num(leader_retention,1,"%"),f"新領頭股 {safe_num(new_leaders,0)}／延續分數 {safe_num(leadership_score,1)}"),
     ])
+
+    st.write("### 🎯 今日決策三層｜狀態 → 證據 → 行動")
+    evs=evidence_ladder.get("stats",{}) if evidence_ladder else {}
+    ev20=f"20日中位 {safe_num(evs.get('中位20%'),2,'%')}｜上漲率 {safe_num(evs.get('上漲率20%'),1,'%')}"
+    evsample=f"{evidence_ladder.get('tier','—')}｜{evidence_ladder.get('grade','—')}｜20日樣本 {evs.get('n20',0)}｜年度 {evs.get('年度有效數',0)}"
+    action_sub=f"曝險 {exposure_plan['顯示']}｜證據不足時沿用既有基準，不因小樣本額外加碼"
+    decision_cards([
+        ("① 現在是什麼",f"{stage}｜{market_regime_current}",evidence_ladder.get("state_conclusion",stage_plain(stage))),
+        ("② 歷史怎麼看",evidence_ladder.get("tendency","⚪ 尚無歷史推論"),f"{evsample}｜{ev20}"),
+        ("③ 今天怎麼做",operation_level,action_sub),
+    ])
+    st.markdown(f'<div class="focus-box"><b>今天最大的客觀變化：</b> {html.escape("；".join(daily_change_evidence))}<br><span class="small-note">這一列只描述今天相對昨天的變化，不把方向自動當成買賣訊號。</span></div>',unsafe_allow_html=True)
+
+    if evidence_ladder.get("ok"):
+        if evidence_ladder.get("tier_rank",99)<=2:
+            st.success(f"歷史證據採用 {evidence_ladder['tier']}｜{evidence_ladder['grade']}。條件式樣本足夠，不需要放寬到大類基準。")
+        elif evidence_ladder.get("tier_rank",99)<=4:
+            st.info(f"精確條件樣本不足，已自動放寬到 {evidence_ladder['tier']}｜{evidence_ladder['grade']}。今天仍有市場狀態與正式操作結論，但歷史機率要保守解讀。")
+        else:
+            st.warning(f"細條件歷史樣本不足，目前只採 {evidence_ladder['tier']}｜{evidence_ladder['grade']}。維持既有曝險基準，不因這組小樣本額外加減碼。")
+        with st.expander("📚 證據梯｜系統這次為什麼採這一層？",expanded=False):
+            st.dataframe(evidence_ladder["candidates"],hide_index=True,use_container_width=True)
+            st.caption("先嘗試精確條件；20日去群聚樣本不足時依序放寬。A/B/C/D是『證據完整度』，不是預測準確率。歷史偏正向/偏弱只與全期基準比較，不直接改變正式操作。")
+    else:
+        st.warning(f"歷史證據層暫不可用：{evidence_ladder.get('reason','資料不足')} 但『現在是什麼』與已回測的操作基準仍照常顯示。")
 
     st.write("### 🧭 市場導航｜今天像什麼？下一步可能去哪？")
     if market_nav.get("ok"):
@@ -3282,7 +3557,7 @@ with tabs[3]:
 
     wc=wade_chart(daily,180)
     if wc is not None: st.altair_chart(wc,use_container_width=True)
-    st.markdown("**Wade v3.1：分數公式仍是 v0.2**｜上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。v3 沒有最佳化原始分數權重；本次只校準「怎麼解讀分數、生命週期、左右側與曝險」，避免為歷史資料過度擬合。")
+    st.markdown("**Wade v3.2：分數公式仍是 v0.2**｜上漲廣度 20%＋RS 水位 20%＋新高/低 10%＋漲跌停 7%＋RS方向 12%＋量價效率 10%＋加權/等權同步 8%＋櫃買相對強弱 6%＋主流延續 7%。v3 沒有最佳化原始分數權重；本次只校準「怎麼解讀分數、生命週期、左右側與曝險」，避免為歷史資料過度擬合。")
     cols=[c for c in ["日期","Wade內部強度分數","Wade分數5日變化","Wade市場狀態","左側減碼警示","早期轉強訊號","上漲家數","下跌家數","上漲比例%","漲停近似家數","跌停近似家數","52週新高家數","52週新低家數","上市上漲比例%","上櫃上漲比例%","成交金額20日比%","加權指數報酬%","櫃買指數報酬%","上市等權平均報酬%","上櫃等權平均報酬%","主流延續率%","新強勢領頭股數","量價效率分數","權值同步分數","櫃買相對強弱分數","主流延續分數","市場總結白話","操作建議","市場階段","強勢股方向"] if c in daily.columns]
     if cols:
         hist_base=daily[cols].copy()
