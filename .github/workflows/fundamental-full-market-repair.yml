@@ -62,20 +62,16 @@ jobs:
           echo "date=$TARGET_DATE" >> "$GITHUB_OUTPUT"
           echo "TARGET_DATE=$TARGET_DATE"
 
-      # 注意：key 故意加 run_id。
-      # GitHub cache 不可覆寫同一 key；v1 修復若已建立 8/26 cache，
-      # 使用唯一新 key 才能在成功後保存「已補歷史季報」的 stock.db。
-      # 下一個交易日的 daily-update 會透過 tw-stock-runtime-v25-${runner.os}- prefix
-      # 自動拿到最近建立的這份修復後 cache。
-      - name: Restore runtime cache and prepare new repaired cache key
+      - name: Restore repaired runtime cache
         uses: actions/cache@v5
         with:
           path: |
             automation/duckbill/stock.db
             automation/duckbill/stock.db-wal
             automation/duckbill/stock.db-shm
-          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-quarter-batch-v2-${{ github.run_id }}
+          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-cleanup-v21-${{ github.run_id }}
           restore-keys: |
+            tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-quarter-batch-v2-
             tw-stock-runtime-v25-${{ runner.os }}-
             tw-stock-runtime-${{ runner.os }}-
 
@@ -96,14 +92,19 @@ jobs:
           python -u automation/duckbill/stock_duckbill.py \
             --update --date "${{ steps.target.outputs.date }}"
 
-      - name: Batch backfill missing quarterly income statements
+      - name: Normal quarterly batch backfill
         run: |
           python -u automation/duckbill/fundamental_batch_income_backfill.py \
             --date "${{ steps.target.outputs.date }}"
 
-      # 不再使用 v1 的 --repair-missing-core（逐檔舊頁爬取）。
-      # 批次補完 SQLite 後，只叫既有 fixer 做全市場驗收＋Excel 回寫。
-      - name: Re-validate full-market revenue and three-rate status
+      - name: Clean remaining three-rate exceptions
+        run: |
+          python -u automation/duckbill/fundamental_three_rate_cleanup.py \
+            --date "${{ steps.target.outputs.date }}" \
+            --batch-retries 3 \
+            --single-tries 2
+
+      - name: Re-validate and write workbook
         run: |
           TARGET_TAG=$(echo "${{ steps.target.outputs.date }}" | tr -d '-')
           python -u automation/duckbill/fundamental_full_market_fix.py \
@@ -111,16 +112,17 @@ jobs:
             --workbook "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx"
           cp "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" duck_latest.xlsx
 
-      - name: Show validation summary
+      - name: Show final classified summary
         run: |
           python - <<'PY'
           import json
-          print("=== 批次歷史補洞 ===")
-          a=json.load(open("fundamental_batch_income_backfill_status.json",encoding="utf-8"))
-          print("缺口:", a.get("missing_stock_period_before"), "→", a.get("missing_stock_period_after"))
-          print("2382:", json.dumps(a.get("quanta_2382"),ensure_ascii=False,indent=2))
-          print("\n=== 最終全市場驗收 ===")
+          a=json.load(open("fundamental_three_rate_cleanup_status.json",encoding="utf-8"))
           b=json.load(open("fundamental_full_market_status.json",encoding="utf-8"))
+          print("=== 三率例外清理 ===")
+          print("核心缺口:", a.get("core_missing_before"), "→", a.get("core_missing_after"))
+          print("驗收分類:", json.dumps(a.get("validation_after"),ensure_ascii=False,indent=2))
+          print("真正仍需追蹤:", a.get("true_unresolved_count"))
+          print("\n=== 最終全市場統計 ===")
           print(json.dumps(b.get("counts"),ensure_ascii=False,indent=2))
           print("2382:", json.dumps(b.get("quanta_2382"),ensure_ascii=False,indent=2))
           PY
@@ -130,10 +132,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add duck_latest.xlsx fundamental_full_market_status.json fundamental_batch_income_backfill_status.json
+          git add duck_latest.xlsx \
+                  fundamental_full_market_status.json \
+                  fundamental_batch_income_backfill_status.json \
+                  fundamental_three_rate_cleanup_status.json \
+                  fundamental_three_rate_exceptions.csv
           if git diff --cached --quiet; then
             echo "No changes."
           else
-            git commit -m "fix: batch backfill quarterly fundamentals ${{ steps.target.outputs.date }}"
+            git commit -m "fix: classify and clean remaining three-rate exceptions ${{ steps.target.outputs.date }}"
             git push origin HEAD:main
           fi
