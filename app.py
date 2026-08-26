@@ -1842,6 +1842,158 @@ def index_lr_assessment(row, prefix, label):
     else: phase="⏳ 等待"; action="尚無明顯左右側優勢"
     return {"名稱":label,"收盤":close,"左側分數":round(left,1),"右側分數":round(right,1),"階段":phase,"建議":action,"依據":"；".join(reasons)}
 
+
+def stock_rs_score_explain(rs, source=""):
+    """RS 是 250 交易日報酬的全市場橫斷面百分位，不是勝率。"""
+    x=_num(rs)
+    src=_clean_cell(source) or "資料來源未標示"
+    if x is None:
+        return f"{src}｜RS資料不足"
+    front=max(0.0,100.0-float(x))
+    return f"{src}｜RS {x:.1f}＝近250交易日報酬約勝過全市場 {x:.1f}% 股票（約位前 {front:.1f}%）；不是{x:.0f}%上漲機率"
+
+
+def stock_overheat_score_detail(gap20, rs, formal=False, complete=0, overheat_flag=False, has_hot_date=False):
+    """個股過熱程度 0-100；盤後與盤中共用同一公式。"""
+    g=_num(gap20,0) or 0
+    r=_num(rs)
+    comp=_num(complete,0) or 0
+    parts=[]
+
+    base=max(0,min(70,max(0,g)*5.0))
+    heat=base
+    parts.append(f"月線正乖離 {g:+.1f}% → +{base:.1f}")
+
+    if r is not None and r>=95:
+        heat+=12; parts.append("RS≥95 → +12")
+    elif r is not None and r>=85:
+        heat+=8; parts.append("RS≥85 → +8")
+
+    if bool(formal) or comp>=100:
+        heat+=8; parts.append("正式鴨嘴/完成100% → +8")
+
+    if bool(overheat_flag):
+        before=heat
+        heat=max(70,heat+18)
+        parts.append(f"目前過熱條件 → 至少70（{before:.1f}→{heat:.1f}）")
+
+    if bool(has_hot_date):
+        heat+=8; parts.append("已有首次過熱日期 → +8")
+
+    raw=heat
+    heat=max(0,min(100,heat))
+    if abs(raw-heat)>1e-9:
+        parts.append(f"總分截斷至 {heat:.1f}")
+    return round(heat,1),"；".join(parts)
+
+
+def stock_left_score_detail(discount, val, rec, tr, rev, epsg, pre, overheat_flag, formal, complete):
+    """個股左側分數 0-100；回傳總分與完整加減分。"""
+    left=0.0
+    parts=[]
+    d=_num(discount)
+    rv=_num(rec)
+    eg=_num(epsg)
+    comp=_num(complete,0) or 0
+    val_s=_clean_cell(val)
+    tr_s=_clean_cell(tr)
+    rev_s=_clean_cell(rev)
+    pre_s=_clean_cell(pre)
+
+    if d is not None:
+        if d>=20:
+            left+=35; parts.append(f"折價率 {d:.1f}% ≥20% → +35")
+        elif d>=10:
+            left+=28; parts.append(f"折價率 {d:.1f}% → +28")
+        elif d>=0:
+            left+=16; parts.append(f"折價率 {d:.1f}% → +16")
+        elif d<=-20:
+            left-=8; parts.append(f"折價率 {d:.1f}% ≤-20% → -8")
+        else:
+            parts.append(f"折價率 {d:.1f}% → +0")
+    elif val_s in {"明顯低估","買進區","合理偏低"}:
+        pts={"明顯低估":35,"買進區":28,"合理偏低":16}[val_s]
+        left+=pts; parts.append(f"估值狀態「{val_s}」 → +{pts}")
+
+    if rv is not None:
+        pts=max(12,min(30,rv*0.32))
+        left+=pts; parts.append(f"復甦分數 {rv:.1f}×0.32 → +{pts:.1f}")
+
+    if tr_s=="三率三升":
+        left+=10; parts.append("三率三升 → +10")
+    elif tr_s in {"資料不足","比較期歷史不足","資料缺漏"}:
+        parts.append(f"三率「{tr_s}」→ 不當成未三升，不加不扣")
+
+    if rev_s=="營收三增":
+        left+=10; parts.append("營收三增 → +10")
+    elif "不足" in rev_s or "不適用" in rev_s:
+        parts.append(f"營收「{rev_s}」→ 不當成未三增，不加不扣")
+
+    if eg is not None and eg>0:
+        left+=5; parts.append(f"EPS年增 {eg:+.1f}% → +5")
+
+    if "A級" in pre_s:
+        left+=10; parts.append("預備鴨嘴A級 → +10")
+    elif "B級" in pre_s:
+        left+=5; parts.append("預備鴨嘴B級 → +5")
+
+    if bool(overheat_flag):
+        left-=20; parts.append("目前過熱 → -20")
+
+    if bool(formal) and comp>=100:
+        left-=5; parts.append("正式鴨嘴且完成100% → -5（已右側化）")
+
+    raw=left
+    left=max(0,min(100,left))
+    if abs(raw-left)>1e-9:
+        parts.append(f"總分截斷至 {left:.1f}")
+    return round(left,1),"；".join(parts) or "無有效左側加減分"
+
+
+def stock_right_score_detail(complete, rs, today_new=False, formal=False, pre="", ma20chg=0, ma60chg=0, spreadchg=0, exit_today=False):
+    """個股右側分數 0-100；盤後與盤中共用同一公式。"""
+    comp=_num(complete,0) or 0
+    r=_num(rs)
+    m20=_num(ma20chg,0) or 0
+    m60=_num(ma60chg,0) or 0
+    spr=_num(spreadchg,0) or 0
+    pre_s=_clean_cell(pre)
+    parts=[]
+
+    base=max(0,min(55,comp*0.55))
+    right=base
+    parts.append(f"鴨嘴完成度 {comp:.0f}%×0.55 → +{base:.1f}")
+
+    if r is not None:
+        if r>=85:
+            right+=25; parts.append(f"RS {r:.1f}≥85 → +25")
+        elif r>=70:
+            right+=18; parts.append(f"RS {r:.1f}≥70 → +18")
+        elif r>=50:
+            right+=10; parts.append(f"RS {r:.1f}≥50 → +10")
+        else:
+            parts.append(f"RS {r:.1f}<50 → +0")
+
+    # 三種型態加分互斥：今日新進 > 正式鴨嘴 > 預備A級。
+    if bool(today_new):
+        right+=12; parts.append("今日新進 → +12")
+    elif bool(formal):
+        right+=8; parts.append("正式鴨嘴 → +8")
+    elif "A級" in pre_s:
+        right+=6; parts.append("預備鴨嘴A級 → +6")
+
+    if m20>0 and m60>0 and spr>0:
+        right+=6; parts.append("MA20、MA60與開口同步改善 → +6")
+
+    if bool(exit_today):
+        right-=30; parts.append("今日退出 → -30")
+
+    raw=right
+    right=max(0,min(100,right))
+    if abs(raw-right)>1e-9:
+        parts.append(f"總分截斷至 {right:.1f}")
+    return round(right,1),"；".join(parts)
+
 def build_stock_lr_table(master, strong, recovery, formal_rs=None, market_entry_ok=False, market_entry_label="市場廣度未確認"):
     """個股左右側量化代理。
     左側偏重估值、基本面與跌深修復；右側偏重價格趨勢、鴨嘴完成度與 RS。
@@ -1908,51 +2060,23 @@ def build_stock_lr_table(master, strong, recovery, formal_rs=None, market_entry_
         except Exception:
             has_hot_date=bool(first_hot)
 
-        # 過熱程度 0-100：與右側強度分開。右側可很強，同時也可能很熱。
-        # 月線乖離是主體；RS/正式型態/既有過熱標記只做加成，不直接壓低右側分數。
-        heat=max(0,min(70,max(0,gap20)*5.0))
-        if rs is not None and rs>=95: heat+=12
-        elif rs is not None and rs>=85: heat+=8
-        if formal or complete>=100: heat+=8
-        # 若原始鴨嘴狀態已明確標示「過熱／不建議追價」，過熱程度至少進入高檔區，避免文字與分數互相矛盾。
-        if overheat: heat=max(70,heat+18)
-        if has_hot_date: heat+=8
-        heat=max(0,min(100,heat))
-
-        # 左側 0-100：估值 35 + 修復 30 + 基本面 25 + 接近右側 10。
-        left=0; lreason=[]
-        if discount is not None:
-            if discount>=20: left+=35; lreason.append(f"折價{discount:.0f}%")
-            elif discount>=10: left+=28; lreason.append(f"進入估值買進區({discount:.0f}%)")
-            elif discount>=0: left+=16; lreason.append("估值合理偏低")
-            elif discount<=-20: left-=8; lreason.append("估值偏貴")
-        elif val in {"明顯低估","買進區","合理偏低"}:
-            left+={"明顯低估":35,"買進區":28,"合理偏低":16}[val]; lreason.append(val)
-        if rec is not None:
-            left+=max(12,min(30,rec*0.32)); lreason.append(f"復甦分數{rec:.0f}")
-        if tr=="三率三升": left+=10; lreason.append("三率三升")
-        if rev=="營收三增": left+=10; lreason.append("營收三增")
-        if epsg is not None and epsg>0: left+=5; lreason.append("EPS年增為正")
-        if "A級" in pre: left+=10; lreason.append("預備鴨嘴A級")
-        elif "B級" in pre: left+=5; lreason.append("預備鴨嘴B級")
-        if overheat: left-=20
-        if formal and complete>=100: left-=5  # 已轉成右側，不再把它當純左側。
-        left=max(0,min(100,left))
-
-        # 右側 0-100：價格型態/完成度 55 + RS 25 + 觸發/延續 20。
-        right=max(0,min(55,complete*0.55)); rreason=[]
-        if complete>=80: rreason.append(f"鴨嘴完成{complete:.0f}%")
-        if rs is not None:
-            if rs>=85: right+=25; rreason.append(f"RS {rs:.0f}")
-            elif rs>=70: right+=18; rreason.append(f"RS {rs:.0f}")
-            elif rs>=50: right+=10; rreason.append(f"RS {rs:.0f}")
-        if stage.startswith("新進"): right+=12; rreason.append("今日右側觸發/新進")
-        elif formal: right+=8; rreason.append("正式鴨嘴")
-        elif "A級" in pre: right+=6; rreason.append("接近右側觸發")
-        if ma20chg>0 and ma60chg>0 and spreadchg>0: right+=6; rreason.append("均線與開口同步改善")
+        # v3.5.5：個股左/右側與過熱改用共用函式。
+        # 目的：盤後、盤中、畫面拆解全部使用同一套公式，避免註解和實際加分漂移。
+        heat,heat_detail=stock_overheat_score_detail(
+            gap20,rs,formal=formal,complete=complete,
+            overheat_flag=overheat,has_hot_date=has_hot_date
+        )
+        left,left_detail=stock_left_score_detail(
+            discount,val,rec,tr,rev,epsg,pre,overheat,formal,complete
+        )
+        right,right_detail=stock_right_score_detail(
+            complete,rs,today_new=today_new,formal=formal,pre=pre,
+            ma20chg=ma20chg,ma60chg=ma60chg,spreadchg=spreadchg,exit_today=exit_today
+        )
+        # 簡短依據供表格使用；完整加減分另存「評分拆解」欄。
+        lreason=[x for x in left_detail.split("；") if x]
+        rreason=[x for x in right_detail.split("；") if x]
         if overheat: rreason.append("過熱，不宜追價")
-        if exit_today: right-=30; rreason.append("今日退出")
-        right=max(0,min(100,right))
 
         # 右側分數算完後，用完整資訊重建獲利／出場階段。
         profit_plan=stock_profit_exit_plan(
@@ -2007,7 +2131,9 @@ def build_stock_lr_table(master, strong, recovery, formal_rs=None, market_entry_
             "回測參考":profit_plan["回測參考"],"二階段確認":profit_plan["二階段確認"],
             "加碼條件":add_cond,"失效條件":invalid_cond,
             "左右側階段":phase,"系統建議":action,
-            "左側依據":"；".join(lreason[:5]) or "—","右側依據":"；".join(rreason[:5]) or "—"
+            "左側依據":"；".join(lreason[:5]) or "—","右側依據":"；".join(rreason[:5]) or "—",
+            "左側評分拆解":left_detail,"右側評分拆解":right_detail,
+            "過熱評分拆解":heat_detail,"RS評分說明":stock_rs_score_explain(rs,r.get("RS來源"))
         })
     z=pd.concat([x.reset_index(drop=True),pd.DataFrame(rows)],axis=1)
     z["決策排序分數"]=z[["左側分數","右側分數"]].max(axis=1)
@@ -2802,29 +2928,23 @@ def _intraday_stock_trade_plan(live_row, formal_row, snap: dict, cost=None) -> d
     pre_s=_clean_cell(formal_row.get("預備鴨嘴狀態"))
 
     gap20=((price/live_ma20-1.0)*100.0) if price is not None and live_ma20 not in (None,0) else 0.0
-    heat=max(0,min(70,max(0,gap20)*5.0))
-    if rs_live is not None and rs_live>=95: heat+=12
-    elif rs_live is not None and rs_live>=85: heat+=8
-    if live_formal or complete>=100: heat+=8
     first_hot=formal_row.get("首次過熱日期")
     try:
         has_hot=not pd.isna(first_hot) and str(first_hot).strip() not in {"","—","-"}
     except Exception:
         has_hot=bool(first_hot)
-    if has_hot: heat+=8
-    heat=max(0,min(100,heat))
 
-    right=max(0,min(55,complete*0.55))
-    if rs_live is not None:
-        if rs_live>=85: right+=25
-        elif rs_live>=70: right+=18
-        elif rs_live>=50: right+=10
-    if today_new: right+=12
-    elif live_formal: right+=8
-    elif "A級" in pre_s: right+=6
-    if ma20chg>0 and ma60chg>0 and spreadchg>0: right+=6
-    if exit_today: right-=30
-    right=max(0,min(100,right))
+    # v3.5.5：盤中與盤後共用同一過熱/右側公式。
+    # 鴨嘴原始系統把月線正乖離 >= 8% 視為過熱，因此盤中也用相同門檻做試算。
+    live_overheat=bool(gap20>=8.0)
+    heat,heat_detail=stock_overheat_score_detail(
+        gap20,rs_live,formal=live_formal,complete=complete,
+        overheat_flag=live_overheat,has_hot_date=has_hot
+    )
+    right,right_detail=stock_right_score_detail(
+        complete,rs_live,today_new=today_new,formal=live_formal,pre=pre_s,
+        ma20chg=ma20chg,ma60chg=ma60chg,spreadchg=spreadchg,exit_today=exit_today
+    )
 
     gate=_intraday_entry_gate(snap)
     entry=stock_entry_plan(
@@ -2898,6 +3018,9 @@ def _intraday_stock_trade_plan(live_row, formal_row, snap: dict, cost=None) -> d
         "市場閘門說明":gate["說明"],
         "硬停損價":failure.get("硬停損價"),
         "成本報酬%":failure.get("成本報酬%"),
+        "右側評分拆解":right_detail,
+        "過熱評分拆解":heat_detail,
+        "RS評分說明":stock_rs_score_explain(rs_live,"盤中試算"),
     }
 
 
@@ -3001,6 +3124,11 @@ def _manual_stock_lookup(manager):
         f"盤中試算：右側 {plan['右側分數']:.0f}／過熱 {plan['過熱程度']:.0f}／"
         f"鴨嘴完成 {plan['鴨嘴完成度%']:.0f}%｜{plan['市場閘門']}｜{plan['市場閘門說明']}"
     )
+    with st.expander("🧮 查看盤中評分拆解", expanded=False):
+        st.write(f"**右側：** {_clean_cell(plan.get('右側評分拆解')) or '—'}")
+        st.write(f"**過熱：** {_clean_cell(plan.get('過熱評分拆解')) or '—'}")
+        st.write(f"**RS：** {_clean_cell(plan.get('RS評分說明')) or '—'}")
+        st.caption("盤中為試算；正式RS/右側/過熱仍以收盤後正式資料確認。若價格來自最佳買/賣或前收備援，可信度再降一級。")
     if cost_v>0 and plan.get("硬停損價") is not None:
         ret_txt="—" if plan.get("成本報酬%") is None else f"{plan['成本報酬%']:+.2f}%"
         st.caption(f"平均成本 {cost_v:.2f}｜-8% 收盤硬停損參考價 {plan['硬停損價']:.2f}｜目前相對成本 {ret_txt}。盤中跌破只預警，收盤仍符合才正式觸發。")
@@ -3281,6 +3409,18 @@ with tabs[1]:
         st.caption(f"符合目前篩選：{len(sx):,} 檔。進場：預備80＋RS70＋市場改善先試單、右側65為主要進場；獲利：一般/可交易股70～80、RS85領頭股90；失敗：單檔填成本後以收盤-8%作硬停損。")
         st.dataframe(compact,hide_index=True,use_container_width=True,height=520)
 
+        with st.expander("📖 個股分數公式字典｜左側／右側／RS／過熱", expanded=False):
+            st.markdown(
+                """
+**左側 0–100**：估值最高35＋復甦最高30＋基本面（三率10＋營收10＋EPS5）＋預備鴨嘴A/B（10/5）；目前過熱-20；正式鴨嘴完成100%-5。  
+**右側 0–100**：鴨嘴完成度×0.55（最高55）＋RS（≥85:+25、≥70:+18、≥50:+10）＋互斥型態加分（今日新進+12／正式+8／預備A+6）＋均線與開口同步+6；今日退出-30；最後截斷0–100。  
+**過熱 0–100**：月線正乖離×5（最高70）＋RS高檔加成＋正式型態+8＋目前過熱條件至少推到70＋曾過熱+8；最後截斷0–100。  
+**RS 0–100**：`今日收盤 ÷ 250交易日前收盤 - 1` 的全市場百分位排名；RS85約代表前15%，不是85%勝率。  
+**鴨嘴完成度**：5項條件，每完成1項20%；100%=5/5。  
+**復甦分數**：35%跌深甜蜜點＋40%短中期動能＋25%RS修復。
+                """
+            )
+            st.caption("v3.5.5起，盤後個股卡與盤中單檔試算共用同一套右側/過熱計分函式，避免兩邊公式漂移。")
         st.write("### ② 單檔決策卡")
         if sx.empty:
             st.info("目前篩選沒有個股；放寬條件後即可查看單檔決策卡。")
@@ -3348,6 +3488,12 @@ with tabs[1]:
                 st.write(f"**系統建議：** {_clean_cell(r.get('系統建議')) or '—'}")
                 st.write(f"**左側依據：** {_clean_cell(r.get('左側依據')) or '—'}")
                 st.write(f"**右側依據：** {_clean_cell(r.get('右側依據')) or '—'}")
+                st.markdown("**🧮 個股評分逐項拆解**")
+                st.write(f"**左側 {left_v:.0f}：** {_clean_cell(r.get('左側評分拆解')) or '—'}")
+                st.write(f"**右側 {right_v:.0f}：** {_clean_cell(r.get('右側評分拆解')) or '—'}")
+                st.write(f"**過熱 {heat_v:.0f}：** {_clean_cell(r.get('過熱評分拆解')) or '—'}")
+                st.write(f"**RS：** {_clean_cell(r.get('RS評分說明')) or stock_rs_score_explain(rs_v,r.get('RS來源'))}")
+                st.caption("分數是條件強度/相對位置，不是上漲機率。RS是250交易日報酬的全市場百分位；左側、右側、過熱則是本系統量化代理。")
                 st.write(f"**加碼條件：** {_clean_cell(r.get('加碼條件')) or '—'}")
                 st.write(f"**進場回測：** {_clean_cell(r.get('進場回測參考')) or '—'}")
                 st.write(f"**獲利回測：** {_clean_cell(r.get('回測參考')) or '—'}")
@@ -3688,4 +3834,4 @@ with tabs[7]:
     with open(DEFAULT_RS,"rb") as f: d1.download_button("下載 RS 最新結果",f.read(),file_name="rs_latest.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
     with open(DEFAULT_DUCK,"rb") as f: d2.download_button("下載鴨嘴最新結果",f.read(),file_name="duck_latest.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
-st.divider(); st.caption(f"正式版 v3.5.4｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
+st.divider(); st.caption(f"正式版 v3.5.5｜評分透明化 × 盤中/盤後計分一致｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
