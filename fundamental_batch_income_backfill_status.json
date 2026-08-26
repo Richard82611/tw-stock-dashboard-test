@@ -1,0 +1,168 @@
+{
+  "version": "quarterly-batch-v2",
+  "target_date": "2026-08-26",
+  "all_market_stock_count": 1953,
+  "three_rate_na": 34,
+  "missing_stock_period_before": 1478,
+  "missing_stock_period_after": 38,
+  "filled_stock_period": 1440,
+  "parsed_records": 1440,
+  "upserted_records": 1440,
+  "remaining_by_period": {
+    "2025Q4": 23,
+    "2026Q1": 10,
+    "2026Q2": 5
+  },
+  "fetch_log": [
+    {
+      "period": "2025Q3",
+      "TYPEK": "sii",
+      "status": "OK",
+      "parsed": 65,
+      "upserted": 65,
+      "remaining": 23,
+      "message": "https://mopsov.twse.com.tw:sii:2025Q3:解析65檔"
+    },
+    {
+      "period": "2025Q3",
+      "TYPEK": "otc",
+      "status": "OK",
+      "parsed": 23,
+      "upserted": 23,
+      "remaining": 0,
+      "message": "https://mopsov.twse.com.tw:otc:2025Q3:解析23檔"
+    },
+    {
+      "period": "2025Q4",
+      "TYPEK": "sii",
+      "status": "OK",
+      "parsed": 63,
+      "upserted": 63,
+      "remaining": 23,
+      "message": "https://mopsov.twse.com.tw:sii:2025Q4:解析63檔"
+    },
+    {
+      "period": "2025Q4",
+      "TYPEK": "otc",
+      "status": "ERROR",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 23,
+      "message": "RuntimeError: https://mops.twse.com.tw:otc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:otc:ConnectTimeout:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by ConnectTimeoutError(<HTTPSConnection"
+    },
+    {
+      "period": "2025Q4",
+      "TYPEK": "rotc",
+      "status": "ERROR",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 23,
+      "message": "RuntimeError: https://mops.twse.com.tw:rotc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:rotc:ConnectTimeout:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by ConnectTimeoutError(<HTTPSConnection"
+    },
+    {
+      "period": "2025Q4",
+      "TYPEK": "pub",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 23,
+      "message": "https://mopsov.twse.com.tw:pub:2025Q4:解析0檔"
+    },
+    {
+      "period": "2026Q1",
+      "TYPEK": "sii",
+      "status": "OK",
+      "parsed": 646,
+      "upserted": 646,
+      "remaining": 653,
+      "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析646檔"
+    },
+    {
+      "period": "2026Q1",
+      "TYPEK": "otc",
+      "status": "OK",
+      "parsed": 643,
+      "upserted": 643,
+      "remaining": 10,
+      "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析643檔"
+    },
+    {
+      "period": "2026Q1",
+      "TYPEK": "rotc",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 10,
+      "message": "https://mopsov.twse.com.tw:rotc:2026Q1:解析0檔"
+    },
+    {
+      "period": "2026Q1",
+      "TYPEK": "pub",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 10,
+      "message": "https://mopsov.twse.com.tw:pub:2026Q1:解析0檔"
+    },
+    {
+      "period": "2026Q2",
+      "TYPEK": "sii",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 5,
+      "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析0檔"
+    },
+    {
+      "period": "2026Q2",
+      "TYPEK": "otc",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 5,
+      "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析0檔"
+    },
+    {
+      "period": "2026Q2",
+      "TYPEK": "rotc",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 5,
+      "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
+    },
+    {
+      "period": "2026Q2",
+      "TYPEK": "pub",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 5,
+      "message": "https://mopsov.twse.com.tw:pub:2026Q2:解析0檔"
+    }
+  ],
+  "quanta_2382": {
+    "stock_id": "2382",
+    "status": "三率三升",
+    "period": "2026Q2 vs 2026Q1",
+    "gross_current_pct": 5.024041978794078,
+    "gross_prev_pct": 4.78200990457422,
+    "operating_current_pct": 3.303521875426807,
+    "operating_prev_pct": 2.8452067402027748,
+    "net_current_pct": 2.777123711824823,
+    "net_prev_pct": 2.6329162925697727,
+    "source": "TWSE OpenAPI L t187ap06_ci＋SQLite歷史季報"
+  },
+  "method": {
+    "endpoint": "MOPS ajax_t163sb04",
+    "markets": [
+      "sii",
+      "otc",
+      "rotc",
+      "pub"
+    ],
+    "requests_are_market_quarter_batch": true,
+    "point_in_time": "conservative legal availability deadline",
+    "unknown_is_false": false
+  }
+}
