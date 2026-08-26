@@ -3,88 +3,51 @@
   "target_date": "2026-08-26",
   "all_market_stock_count": 1953,
   "three_rate_na": 34,
-  "missing_stock_period_before": 1478,
-  "missing_stock_period_after": 38,
-  "filled_stock_period": 1440,
-  "parsed_records": 1440,
-  "upserted_records": 1440,
+  "missing_stock_period_before": 38,
+  "missing_stock_period_after": 15,
+  "filled_stock_period": 23,
+  "parsed_records": 23,
+  "upserted_records": 23,
   "remaining_by_period": {
-    "2025Q4": 23,
     "2026Q1": 10,
     "2026Q2": 5
   },
   "fetch_log": [
     {
-      "period": "2025Q3",
+      "period": "2025Q4",
       "TYPEK": "sii",
       "status": "OK",
-      "parsed": 65,
-      "upserted": 65,
+      "parsed": 0,
+      "upserted": 0,
       "remaining": 23,
-      "message": "https://mopsov.twse.com.tw:sii:2025Q3:解析65檔"
+      "message": "https://mopsov.twse.com.tw:sii:2025Q4:解析0檔"
     },
     {
-      "period": "2025Q3",
+      "period": "2025Q4",
       "TYPEK": "otc",
       "status": "OK",
       "parsed": 23,
       "upserted": 23,
       "remaining": 0,
-      "message": "https://mopsov.twse.com.tw:otc:2025Q3:解析23檔"
-    },
-    {
-      "period": "2025Q4",
-      "TYPEK": "sii",
-      "status": "OK",
-      "parsed": 63,
-      "upserted": 63,
-      "remaining": 23,
-      "message": "https://mopsov.twse.com.tw:sii:2025Q4:解析63檔"
-    },
-    {
-      "period": "2025Q4",
-      "TYPEK": "otc",
-      "status": "ERROR",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 23,
-      "message": "RuntimeError: https://mops.twse.com.tw:otc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:otc:ConnectTimeout:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by ConnectTimeoutError(<HTTPSConnection"
-    },
-    {
-      "period": "2025Q4",
-      "TYPEK": "rotc",
-      "status": "ERROR",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 23,
-      "message": "RuntimeError: https://mops.twse.com.tw:rotc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:rotc:ConnectTimeout:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by ConnectTimeoutError(<HTTPSConnection"
-    },
-    {
-      "period": "2025Q4",
-      "TYPEK": "pub",
-      "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 23,
-      "message": "https://mopsov.twse.com.tw:pub:2025Q4:解析0檔"
+      "message": "https://mopsov.twse.com.tw:otc:2025Q4:解析23檔"
     },
     {
       "period": "2026Q1",
       "TYPEK": "sii",
       "status": "OK",
-      "parsed": 646,
-      "upserted": 646,
-      "remaining": 653,
-      "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析646檔"
-    },
-    {
-      "period": "2026Q1",
-      "TYPEK": "otc",
-      "status": "OK",
-      "parsed": 643,
-      "upserted": 643,
+      "parsed": 0,
+      "upserted": 0,
       "remaining": 10,
-      "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析643檔"
+      "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析0檔"
+    },
+    {
+      "period": "2026Q1",
+      "TYPEK": "otc",
+      "status": "OK",
+      "parsed": 0,
+      "upserted": 0,
+      "remaining": 10,
+      "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析0檔"
     },
     {
       "period": "2026Q1",
@@ -125,11 +88,11 @@
     {
       "period": "2026Q2",
       "TYPEK": "rotc",
-      "status": "OK",
+      "status": "ERROR",
       "parsed": 0,
       "upserted": 0,
       "remaining": 5,
-      "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
+      "message": "RuntimeError: https://mops.twse.com.tw:rotc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:rotc:ConnectionError:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by NewConnectionError(\"HTTPSConnection("
     },
     {
       "period": "2026Q2",

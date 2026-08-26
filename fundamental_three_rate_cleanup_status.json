@@ -1,0 +1,443 @@
+{
+  "version": "three-rate-cleanup-v2.1",
+  "target_date": "2026-08-26",
+  "all_market_stock_count": 1953,
+  "core_missing_before": 15,
+  "core_missing_after": 7,
+  "core_filled": 8,
+  "validation_before": {
+    "可計算三率": 1909,
+    "三率不適用": 34,
+    "缺資料": 6,
+    "比較期歷史不足": 4
+  },
+  "validation_after": {
+    "可計算三率": 1911,
+    "三率不適用": 34,
+    "缺資料": 5,
+    "比較期歷史不足": 3
+  },
+  "batch_retry_rounds": [
+    {
+      "round": 1,
+      "before": 15,
+      "after": 15,
+      "filled": 0,
+      "logs": [
+        {
+          "period": "2026Q1",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "ERROR",
+          "message": "RuntimeError: https://mops.twse.com.tw:rotc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:rotc:HTTPError:502 Server Error: Bad Gateway for url: https://mopsov.twse.com.tw/mops/web/ajax_t1"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q2:解析0檔"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "before": 15,
+      "after": 15,
+      "filled": 0,
+      "logs": [
+        {
+          "period": "2026Q1",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:rotc:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q2:解析0檔"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "before": 15,
+      "after": 15,
+      "filled": 0,
+      "logs": [
+        {
+          "period": "2026Q1",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:rotc:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q1",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 10,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q1:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "sii",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "otc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "rotc",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
+        },
+        {
+          "period": "2026Q2",
+          "TYPEK": "pub",
+          "found": 0,
+          "added": 0,
+          "remaining": 5,
+          "status": "OK",
+          "message": "https://mopsov.twse.com.tw:pub:2026Q2:解析0檔"
+        }
+      ]
+    }
+  ],
+  "single_company_official_fallback": {
+    "tasks": 15,
+    "added": 8,
+    "official_no_data": 0,
+    "failed": 7,
+    "remaining_stock_period": 7,
+    "details": [
+      {
+        "stock_id": "1409",
+        "name": "新纖",
+        "period": "2026Q1",
+        "status": "ERROR",
+        "message": "RuntimeError: MOPS 回傳頁面未解析到有效綜合損益表（不寫入 NODATA，保留下次重試）"
+      },
+      {
+        "stock_id": "1718",
+        "name": "中纖",
+        "period": "2026Q1",
+        "status": "ERROR",
+        "message": "RuntimeError: MOPS 回傳頁面未解析到有效綜合損益表（不寫入 NODATA，保留下次重試）"
+      },
+      {
+        "stock_id": "2207",
+        "name": "和泰車",
+        "period": "2026Q1",
+        "status": "ERROR",
+        "message": "RuntimeError: MOPS 回傳頁面未解析到有效綜合損益表（不寫入 NODATA，保留下次重試）"
+      },
+      {
+        "stock_id": "6005",
+        "name": "群益證",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6015",
+        "name": "宏遠證",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6016",
+        "name": "康和證",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6020",
+        "name": "大展證",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6024",
+        "name": "群益期",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6945",
+        "name": "圓祥生技",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "7827",
+        "name": "漢康-KY創",
+        "period": "2026Q1",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      },
+      {
+        "stock_id": "6005",
+        "name": "群益證",
+        "period": "2026Q2",
+        "status": "ERROR",
+        "message": "RuntimeError: No tables found"
+      },
+      {
+        "stock_id": "6015",
+        "name": "宏遠證",
+        "period": "2026Q2",
+        "status": "ERROR",
+        "message": "RuntimeError: No tables found"
+      },
+      {
+        "stock_id": "6016",
+        "name": "康和證",
+        "period": "2026Q2",
+        "status": "ERROR",
+        "message": "RuntimeError: No tables found"
+      },
+      {
+        "stock_id": "6020",
+        "name": "大展證",
+        "period": "2026Q2",
+        "status": "ERROR",
+        "message": "RuntimeError: No tables found"
+      },
+      {
+        "stock_id": "6024",
+        "name": "群益期",
+        "period": "2026Q2",
+        "status": "ADDED",
+        "message": "官方單檔頁補入"
+      }
+    ]
+  },
+  "true_unresolved_count": 8,
+  "true_unresolved": [
+    {
+      "stock_id": "1409",
+      "name": "新纖",
+      "status": "比較期歷史不足",
+      "reason": "最新季已取得；較舊比較期缺=2026Q1",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "1718",
+      "name": "中纖",
+      "status": "比較期歷史不足",
+      "reason": "最新季已取得；較舊比較期缺=2026Q1",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "2207",
+      "name": "和泰車",
+      "status": "比較期歷史不足",
+      "reason": "最新季已取得；較舊比較期缺=2026Q1",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "6005",
+      "name": "群益證",
+      "status": "缺資料",
+      "reason": "缺依法應有最新季=2026Q2",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "6015",
+      "name": "宏遠證",
+      "status": "缺資料",
+      "reason": "缺依法應有最新季=2026Q2",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "6016",
+      "name": "康和證",
+      "status": "缺資料",
+      "reason": "缺依法應有最新季=2026Q2",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "6020",
+      "name": "大展證",
+      "status": "缺資料",
+      "reason": "缺依法應有最新季=2026Q2",
+      "required": "2026Q1,2026Q2"
+    },
+    {
+      "stock_id": "6024",
+      "name": "群益期",
+      "status": "缺資料",
+      "reason": "最新季欄位缺漏=2026Q1:毛利；2026Q2:毛利",
+      "required": "2026Q1,2026Q2"
+    }
+  ],
+  "classification_note": {
+    "可計算三率": "正式可判定三率三升/未三升",
+    "三率不適用": "金融/保險/金控/異業等報表結構不同",
+    "上市時間不足/不適用": "沒有足夠可比季度，不應列成資料抓取失敗",
+    "比較期歷史不足": "最新季有，但較舊比較期官方資料仍缺",
+    "缺資料": "依法應有最新季或核心欄位仍缺，需後續追蹤"
+  },
+  "official_only_for_three_rate": true
+}

@@ -4,10 +4,13 @@
   "all_market_stock_count": 1953,
   "counts": {
     "stocks": 1953,
-    "three_rate_yes": 651,
-    "three_rate_no": 1179,
-    "three_rate_unknown": 89,
+    "three_rate_yes": 653,
+    "three_rate_no": 1184,
     "three_rate_na": 34,
+    "three_rate_listing_insufficient": 0,
+    "three_rate_prior_history_short": 3,
+    "three_rate_data_missing": 79,
+    "three_rate_unknown": 0,
     "revenue_yes": 755,
     "revenue_no": 1186,
     "revenue_unknown": 12
