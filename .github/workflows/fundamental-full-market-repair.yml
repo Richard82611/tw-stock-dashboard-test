@@ -1,0 +1,124 @@
+name: 全市場三率營收一次性修復
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "修復日期 YYYY-MM-DD；留白 = 最近已收盤工作日"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fundamental-full-market-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      TZ: Asia/Taipei
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install packages
+        run: python -m pip install -r automation/requirements.txt
+
+      - name: Resolve target date
+        id: target
+        shell: bash
+        env:
+          MANUAL_DATE: ${{ github.event.inputs.target_date }}
+        run: |
+          if [ -n "$MANUAL_DATE" ]; then
+            TARGET_DATE="$MANUAL_DATE"
+          else
+            TARGET_DATE=$(python - <<'PYDATE'
+          import datetime as dt
+          from zoneinfo import ZoneInfo
+          now=dt.datetime.now(ZoneInfo("Asia/Taipei"))
+          day=now.date() if now.hour>=16 else now.date()-dt.timedelta(days=1)
+          while day.weekday()>=5:
+              day-=dt.timedelta(days=1)
+          print(day.isoformat())
+          PYDATE
+            )
+          fi
+          echo "date=$TARGET_DATE" >> "$GITHUB_OUTPUT"
+          echo "TARGET_DATE=$TARGET_DATE"
+
+      - name: Restore runtime cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            automation/duckbill/stock.db
+            automation/duckbill/stock.db-wal
+            automation/duckbill/stock.db-shm
+          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}
+          restore-keys: |
+            tw-stock-runtime-v25-${{ runner.os }}-
+            tw-stock-runtime-${{ runner.os }}-
+
+      - name: Bootstrap database on cache miss
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f automation/duckbill/stock.db ]; then
+            mkdir -p /tmp/tw-stock-seed
+            gh release download seed-v2 --pattern "bootstrap_seed_v2.zip" --dir /tmp/tw-stock-seed
+            unzip -q /tmp/tw-stock-seed/bootstrap_seed_v2.zip -d .
+          fi
+          test -f automation/duckbill/stock.db
+
+      - name: Rebuild Duckbill target workbook
+        run: |
+          python -u automation/duckbill/stock_duckbill.py \
+            --update --date "${{ steps.target.outputs.date }}"
+
+      - name: Repair full-market core financial periods and validate
+        run: |
+          TARGET_TAG=$(echo "${{ steps.target.outputs.date }}" | tr -d '-')
+          python -u automation/duckbill/fundamental_full_market_fix.py \
+            --date "${{ steps.target.outputs.date }}" \
+            --workbook "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" \
+            --repair-missing-core \
+            --max-workers 4
+          cp "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" duck_latest.xlsx
+
+      - name: Show 2382 Quanta validation
+        run: |
+          python - <<'PY'
+          import json
+          x=json.load(open("fundamental_full_market_status.json",encoding="utf-8"))
+          print(json.dumps(x.get("quanta_2382"),ensure_ascii=False,indent=2))
+          print(json.dumps(x.get("counts"),ensure_ascii=False,indent=2))
+          PY
+
+      - name: Commit repaired workbook and validation report
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add duck_latest.xlsx fundamental_full_market_status.json
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix: full-market revenue and three-rate validation ${{ steps.target.outputs.date }}"
+            git push origin HEAD:main
+          fi
