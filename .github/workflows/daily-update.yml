@@ -51,7 +51,6 @@ jobs:
           if [ -n "$MANUAL_DATE" ]; then
             TARGET_DATE="$MANUAL_DATE"
           else
-            # 台灣時間 16:00 前，視為當日盤後資料尚未完整，抓最近已收盤日。
             TARGET_DATE=$(python - <<'PYDATE'
           import datetime as dt
           from zoneinfo import ZoneInfo
@@ -74,9 +73,6 @@ jobs:
             automation/duckbill/stock.db-wal
             automation/duckbill/stock.db-shm
             automation/rs/cache
-          # v2.5 專用 cache key：
-          # 第一次升級會從舊 cache fallback，跑完後另存 v25 cache。
-          # 下一交易日再從最新 v25 cache 接續，只補新日期。
           key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}
           restore-keys: |
             tw-stock-runtime-v25-${{ runner.os }}-
@@ -102,6 +98,14 @@ jobs:
       - name: Run RS and Duckbill updates
         run: python -u automation/auto_update.py --date "${{ steps.target.outputs.date }}" --attempts 3 --retry-minutes 8
 
+      # v31：日常全市場基本面驗收。
+      # 只抓官方批次最新資料＋既有SQLite核心季度，不逐檔重抓12季。
+      - name: Verify full-market fundamentals
+        run: |
+          python -u automation/duckbill/fundamental_full_market_fix.py \
+            --date "${{ steps.target.outputs.date }}" \
+            --workbook duck_latest.xlsx
+
       - name: Build intraday baseline
         run: python -u automation/build_intraday_baseline.py
 
@@ -110,7 +114,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rs_latest.xlsx duck_latest.xlsx update_status.json intraday_baseline.pkl.gz intraday_baseline_status.json
+          git add rs_latest.xlsx duck_latest.xlsx update_status.json intraday_baseline.pkl.gz intraday_baseline_status.json fundamental_full_market_status.json
           if git diff --cached --quiet; then
             echo "No dashboard file changes."
           else
