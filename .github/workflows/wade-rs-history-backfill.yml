@@ -1,0 +1,50 @@
+name: Wade 歷史欄位一次性補齊
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wade-rs-history-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: automation/requirements.txt
+
+      - name: Install packages
+        run: python -m pip install -r automation/requirements.txt
+
+      - name: Backfill historical Wade columns
+        run: python -u automation/rs/backfill_wade_history.py
+
+      - name: Show report
+        run: cat wade_history_backfill_report.json
+
+      - name: Commit backfilled rs_latest.xlsx
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rs_latest.xlsx wade_history_backfill_report.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "fix: backfill historical Wade market fields"
+            git push origin HEAD:main
+          fi
