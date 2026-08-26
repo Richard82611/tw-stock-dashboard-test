@@ -62,14 +62,19 @@ jobs:
           echo "date=$TARGET_DATE" >> "$GITHUB_OUTPUT"
           echo "TARGET_DATE=$TARGET_DATE"
 
-      - name: Restore runtime cache
+      # 注意：key 故意加 run_id。
+      # GitHub cache 不可覆寫同一 key；v1 修復若已建立 8/26 cache，
+      # 使用唯一新 key 才能在成功後保存「已補歷史季報」的 stock.db。
+      # 下一個交易日的 daily-update 會透過 tw-stock-runtime-v25-${runner.os}- prefix
+      # 自動拿到最近建立的這份修復後 cache。
+      - name: Restore runtime cache and prepare new repaired cache key
         uses: actions/cache@v5
         with:
           path: |
             automation/duckbill/stock.db
             automation/duckbill/stock.db-wal
             automation/duckbill/stock.db-shm
-          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}
+          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-quarter-batch-v2-${{ github.run_id }}
           restore-keys: |
             tw-stock-runtime-v25-${{ runner.os }}-
             tw-stock-runtime-${{ runner.os }}-
@@ -91,34 +96,44 @@ jobs:
           python -u automation/duckbill/stock_duckbill.py \
             --update --date "${{ steps.target.outputs.date }}"
 
-      - name: Repair full-market core financial periods and validate
+      - name: Batch backfill missing quarterly income statements
+        run: |
+          python -u automation/duckbill/fundamental_batch_income_backfill.py \
+            --date "${{ steps.target.outputs.date }}"
+
+      # 不再使用 v1 的 --repair-missing-core（逐檔舊頁爬取）。
+      # 批次補完 SQLite 後，只叫既有 fixer 做全市場驗收＋Excel 回寫。
+      - name: Re-validate full-market revenue and three-rate status
         run: |
           TARGET_TAG=$(echo "${{ steps.target.outputs.date }}" | tr -d '-')
           python -u automation/duckbill/fundamental_full_market_fix.py \
             --date "${{ steps.target.outputs.date }}" \
-            --workbook "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" \
-            --repair-missing-core \
-            --max-workers 4
+            --workbook "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx"
           cp "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" duck_latest.xlsx
 
-      - name: Show 2382 Quanta validation
+      - name: Show validation summary
         run: |
           python - <<'PY'
           import json
-          x=json.load(open("fundamental_full_market_status.json",encoding="utf-8"))
-          print(json.dumps(x.get("quanta_2382"),ensure_ascii=False,indent=2))
-          print(json.dumps(x.get("counts"),ensure_ascii=False,indent=2))
+          print("=== 批次歷史補洞 ===")
+          a=json.load(open("fundamental_batch_income_backfill_status.json",encoding="utf-8"))
+          print("缺口:", a.get("missing_stock_period_before"), "→", a.get("missing_stock_period_after"))
+          print("2382:", json.dumps(a.get("quanta_2382"),ensure_ascii=False,indent=2))
+          print("\n=== 最終全市場驗收 ===")
+          b=json.load(open("fundamental_full_market_status.json",encoding="utf-8"))
+          print(json.dumps(b.get("counts"),ensure_ascii=False,indent=2))
+          print("2382:", json.dumps(b.get("quanta_2382"),ensure_ascii=False,indent=2))
           PY
 
-      - name: Commit repaired workbook and validation report
+      - name: Commit repaired workbook and reports
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add duck_latest.xlsx fundamental_full_market_status.json
+          git add duck_latest.xlsx fundamental_full_market_status.json fundamental_batch_income_backfill_status.json
           if git diff --cached --quiet; then
             echo "No changes."
           else
-            git commit -m "fix: full-market revenue and three-rate validation ${{ steps.target.outputs.date }}"
+            git commit -m "fix: batch backfill quarterly fundamentals ${{ steps.target.outputs.date }}"
             git push origin HEAD:main
           fi
