@@ -1,0 +1,28 @@
+{
+  "status": "success",
+  "seed_period": [
+    "2018-01-02",
+    "2026-08-21"
+  ],
+  "current_period_before": [
+    "2018-01-02",
+    "2026-08-26"
+  ],
+  "output_period": [
+    "2018-01-02",
+    "2026-08-26"
+  ],
+  "rows": 2102,
+  "cutoff_checked": "2026-03-03",
+  "required_overlay_missing_cells_before": 35574,
+  "required_overlay_missing_cells_after_raw_fill": 6,
+  "pre_cutoff_wade_score_missing_rows_after_recalc": 0,
+  "pre_cutoff_display_missing_rows_after_recalc": {
+    "advance_count": 0,
+    "decline_count": 0,
+    "new_high_count": 0,
+    "new_low_count": 0,
+    "wade_score": 0
+  },
+  "note": "既有非空值優先；seed只補空值。Wade衍生欄位使用目前rs_breadth.py重新計算。"
+}
