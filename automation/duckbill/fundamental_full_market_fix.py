@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-全市場基本面驗收／修復器 v1.0
+全市場基本面驗收／修復器 v2.1
 ================================
 目的：
 1. 三率三升改為「全市場普通股」都檢查，不再只限正式鴨嘴＋預備鴨嘴。
@@ -314,9 +314,18 @@ def patch_workbook(
 
     audit = []
     counts = {
-        "stocks": 0, "three_rate_yes": 0, "three_rate_no": 0,
-        "three_rate_unknown": 0, "three_rate_na": 0,
-        "revenue_yes": 0, "revenue_no": 0, "revenue_unknown": 0,
+        "stocks": 0,
+        "three_rate_yes": 0,
+        "three_rate_no": 0,
+        "three_rate_na": 0,
+        # v2.1：不再把所有非 yes/no 合併成一個「unknown」。
+        "three_rate_listing_insufficient": 0,
+        "three_rate_prior_history_short": 0,
+        "three_rate_data_missing": 0,
+        "three_rate_unknown": 0,
+        "revenue_yes": 0,
+        "revenue_no": 0,
+        "revenue_unknown": 0,
     }
 
     for row in range(3, ws.max_row + 1):
@@ -331,10 +340,20 @@ def patch_workbook(
         ts = three_rate_status(sid, prof_map, vmap)
         rs = revenue_status(sid, rev_map, rev_raw_map)
 
-        if ts == "三率三升": counts["three_rate_yes"] += 1
-        elif ts == "未三升": counts["three_rate_no"] += 1
-        elif ts == "三率不適用": counts["three_rate_na"] += 1
-        else: counts["three_rate_unknown"] += 1
+        if ts == "三率三升":
+            counts["three_rate_yes"] += 1
+        elif ts == "未三升":
+            counts["three_rate_no"] += 1
+        elif ts == "三率不適用":
+            counts["three_rate_na"] += 1
+        elif ts == "上市時間不足":
+            counts["three_rate_listing_insufficient"] += 1
+        elif ts == "比較期歷史不足":
+            counts["three_rate_prior_history_short"] += 1
+        elif ts in {"資料缺漏", "資料不足"}:
+            counts["three_rate_data_missing"] += 1
+        else:
+            counts["three_rate_unknown"] += 1
 
         if rs == "營收三增": counts["revenue_yes"] += 1
         elif rs == "未三增": counts["revenue_no"] += 1
@@ -414,19 +433,22 @@ def patch_workbook(
     va["I3"] = f"普通股：{counts['stocks']}"
     va["I4"] = f"三率三升：{counts['three_rate_yes']}"
     va["I5"] = f"三率未三升：{counts['three_rate_no']}"
-    va["I6"] = f"三率資料不足：{counts['three_rate_unknown']}"
-    va["I7"] = f"三率不適用：{counts['three_rate_na']}"
-    va["I8"] = f"營收三增：{counts['revenue_yes']}"
-    va["I9"] = f"營收未三增：{counts['revenue_no']}"
-    va["I10"] = f"營收資料不足/基期不足：{counts['revenue_unknown']}"
+    va["I6"] = f"三率不適用：{counts['three_rate_na']}"
+    va["I7"] = f"上市時間不足：{counts['three_rate_listing_insufficient']}"
+    va["I8"] = f"較舊比較期不足：{counts['three_rate_prior_history_short']}"
+    va["I9"] = f"真正資料缺漏：{counts['three_rate_data_missing']}"
+    va["I10"] = f"其他未分類：{counts['three_rate_unknown']}"
+    va["I11"] = f"營收三增：{counts['revenue_yes']}"
+    va["I12"] = f"營收未三增：{counts['revenue_no']}"
+    va["I13"] = f"營收資料不足/基期不足：{counts['revenue_unknown']}"
 
     # 廣達 2382 特別驗收，避免這次問題再悄悄回來。
     q = next((x for x in audit if x[0] == "2382"), None)
-    va["I12"] = "2382 廣達驗收"
-    va["I13"] = f"三率：{q[2] if q else '未找到'}"
-    va["I14"] = f"資料期：{q[3] if q else '—'}"
-    va["I15"] = f"營收：{q[4] if q else '未找到'}"
-    va["I16"] = f"營收月：{q[5] if q else '—'}"
+    va["I15"] = "2382 廣達驗收"
+    va["I16"] = f"三率：{q[2] if q else '未找到'}"
+    va["I17"] = f"資料期：{q[3] if q else '—'}"
+    va["I18"] = f"營收：{q[4] if q else '未找到'}"
+    va["I19"] = f"營收月：{q[5] if q else '—'}"
 
     wb.save(workbook)
     return counts, q
