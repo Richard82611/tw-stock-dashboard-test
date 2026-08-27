@@ -98,11 +98,17 @@ jobs:
       - name: Run RS and Duckbill updates
         run: python -u automation/auto_update.py --date "${{ steps.target.outputs.date }}" --attempts 3 --retry-minutes 8
 
-      # v31：日常全市場基本面驗收。
-      # 只抓官方批次最新資料＋既有SQLite核心季度，不逐檔重抓12季。
       - name: Verify full-market fundamentals
         run: |
           python -u automation/duckbill/fundamental_full_market_fix.py \
+            --date "${{ steps.target.outputs.date }}" \
+            --workbook duck_latest.xlsx
+
+      # v2.2：用底層驗收＋SQLite官方歷史季報重建三率顯示，
+      # 避免只有snapshot缺失就被誤列為資料缺漏。
+      - name: Finalize three-rate display from verified history
+        run: |
+          python -u automation/duckbill/fundamental_three_rate_finalizer.py \
             --date "${{ steps.target.outputs.date }}" \
             --workbook duck_latest.xlsx
 
@@ -114,7 +120,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rs_latest.xlsx duck_latest.xlsx update_status.json intraday_baseline.pkl.gz intraday_baseline_status.json fundamental_full_market_status.json
+          git add rs_latest.xlsx duck_latest.xlsx update_status.json \
+                  intraday_baseline.pkl.gz intraday_baseline_status.json \
+                  fundamental_full_market_status.json \
+                  fundamental_three_rate_finalizer_status.json
           if git diff --cached --quiet; then
             echo "No dashboard file changes."
           else

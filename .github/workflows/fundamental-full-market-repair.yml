@@ -69,8 +69,9 @@ jobs:
             automation/duckbill/stock.db
             automation/duckbill/stock.db-wal
             automation/duckbill/stock.db-shm
-          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-cleanup-v21-${{ github.run_id }}
+          key: tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-cleanup-v22-${{ github.run_id }}
           restore-keys: |
+            tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-cleanup-v21-
             tw-stock-runtime-v25-${{ runner.os }}-${{ steps.target.outputs.date }}-quarter-batch-v2-
             tw-stock-runtime-v25-${{ runner.os }}-
             tw-stock-runtime-${{ runner.os }}-
@@ -112,19 +113,26 @@ jobs:
             --workbook "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx"
           cp "automation/duckbill/output/${TARGET_TAG}_鴨嘴篩選結果.xlsx" duck_latest.xlsx
 
+      - name: Finalize three-rate display from verified history
+        run: |
+          python -u automation/duckbill/fundamental_three_rate_finalizer.py \
+            --date "${{ steps.target.outputs.date }}" \
+            --workbook duck_latest.xlsx
+
       - name: Show final classified summary
         run: |
           python - <<'PY'
           import json
           a=json.load(open("fundamental_three_rate_cleanup_status.json",encoding="utf-8"))
           b=json.load(open("fundamental_full_market_status.json",encoding="utf-8"))
+          c=json.load(open("fundamental_three_rate_finalizer_status.json",encoding="utf-8"))
           print("=== 三率例外清理 ===")
           print("核心缺口:", a.get("core_missing_before"), "→", a.get("core_missing_after"))
-          print("驗收分類:", json.dumps(a.get("validation_after"),ensure_ascii=False,indent=2))
+          print("底層驗收:", json.dumps(a.get("validation_after"),ensure_ascii=False,indent=2))
           print("真正仍需追蹤:", a.get("true_unresolved_count"))
-          print("\n=== 最終全市場統計 ===")
-          print(json.dumps(b.get("counts"),ensure_ascii=False,indent=2))
-          print("2382:", json.dumps(b.get("quanta_2382"),ensure_ascii=False,indent=2))
+          print("\n=== v2.2 Excel/JSON 最終顯示 ===")
+          print(json.dumps(c.get("counts"),ensure_ascii=False,indent=2))
+          print("2382:", json.dumps(c.get("quanta_2382"),ensure_ascii=False,indent=2))
           PY
 
       - name: Commit repaired workbook and reports
@@ -136,10 +144,11 @@ jobs:
                   fundamental_full_market_status.json \
                   fundamental_batch_income_backfill_status.json \
                   fundamental_three_rate_cleanup_status.json \
-                  fundamental_three_rate_exceptions.csv
+                  fundamental_three_rate_exceptions.csv \
+                  fundamental_three_rate_finalizer_status.json
           if git diff --cached --quiet; then
             echo "No changes."
           else
-            git commit -m "fix: classify and clean remaining three-rate exceptions ${{ steps.target.outputs.date }}"
+            git commit -m "fix: finalize full-market three-rate display ${{ steps.target.outputs.date }}"
             git push origin HEAD:main
           fi
