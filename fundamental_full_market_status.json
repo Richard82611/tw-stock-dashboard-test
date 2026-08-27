@@ -1,22 +1,22 @@
 {
-  "target_date": "2026-08-26",
-  "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/automation/duckbill/output/20260826_鴨嘴篩選結果.xlsx",
-  "all_market_stock_count": 1953,
+  "target_date": "2026-08-27",
+  "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/duck_latest.xlsx",
+  "all_market_stock_count": 1948,
   "counts": {
-    "stocks": 1953,
-    "three_rate_yes": 653,
-    "three_rate_no": 1184,
-    "three_rate_na": 34,
-    "three_rate_listing_insufficient": 0,
-    "three_rate_prior_history_short": 3,
-    "three_rate_data_missing": 79,
+    "stocks": 1948,
+    "three_rate_yes": 260,
+    "three_rate_no": 275,
+    "three_rate_na": 35,
+    "three_rate_listing_insufficient": 15,
+    "three_rate_prior_history_short": 1254,
+    "three_rate_data_missing": 109,
     "three_rate_unknown": 0,
     "revenue_yes": 755,
-    "revenue_no": 1186,
+    "revenue_no": 1181,
     "revenue_unknown": 12
   },
   "source": {
-    "bulk_income_added": 0,
+    "bulk_income_added": 1264,
     "bulk_income_errors": [],
     "revenue_recalc": 0,
     "revenue_recalc_na": 10
@@ -25,8 +25,8 @@
   "quanta_2382": {
     "stock_id": "2382",
     "name": "廣達",
-    "three_rate_status": "三率三升",
-    "three_rate_period": "2026Q2 vs 2026Q1",
+    "three_rate_status": "比較期歷史不足",
+    "three_rate_period": null,
     "revenue_status": "未三增",
     "revenue_month": "2026-07"
   },
