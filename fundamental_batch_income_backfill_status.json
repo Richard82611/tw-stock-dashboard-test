@@ -1,53 +1,35 @@
 {
   "version": "quarterly-batch-v2",
-  "target_date": "2026-08-26",
-  "all_market_stock_count": 1953,
+  "target_date": "2026-08-27",
+  "all_market_stock_count": 1948,
   "three_rate_na": 34,
-  "missing_stock_period_before": 38,
-  "missing_stock_period_after": 15,
-  "filled_stock_period": 23,
-  "parsed_records": 23,
-  "upserted_records": 23,
+  "missing_stock_period_before": 25,
+  "missing_stock_period_after": 7,
+  "filled_stock_period": 18,
+  "parsed_records": 18,
+  "upserted_records": 18,
   "remaining_by_period": {
-    "2026Q1": 10,
-    "2026Q2": 5
+    "2026Q1": 3,
+    "2026Q2": 4
   },
   "fetch_log": [
     {
-      "period": "2025Q4",
-      "TYPEK": "sii",
-      "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 23,
-      "message": "https://mopsov.twse.com.tw:sii:2025Q4:解析0檔"
-    },
-    {
-      "period": "2025Q4",
-      "TYPEK": "otc",
-      "status": "OK",
-      "parsed": 23,
-      "upserted": 23,
-      "remaining": 0,
-      "message": "https://mopsov.twse.com.tw:otc:2025Q4:解析23檔"
-    },
-    {
       "period": "2026Q1",
       "TYPEK": "sii",
       "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 10,
-      "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析0檔"
+      "parsed": 1,
+      "upserted": 1,
+      "remaining": 11,
+      "message": "https://mopsov.twse.com.tw:sii:2026Q1:解析1檔"
     },
     {
       "period": "2026Q1",
       "TYPEK": "otc",
       "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 10,
-      "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析0檔"
+      "parsed": 8,
+      "upserted": 8,
+      "remaining": 3,
+      "message": "https://mopsov.twse.com.tw:otc:2026Q1:解析8檔"
     },
     {
       "period": "2026Q1",
@@ -55,7 +37,7 @@
       "status": "OK",
       "parsed": 0,
       "upserted": 0,
-      "remaining": 10,
+      "remaining": 3,
       "message": "https://mopsov.twse.com.tw:rotc:2026Q1:解析0檔"
     },
     {
@@ -64,35 +46,35 @@
       "status": "OK",
       "parsed": 0,
       "upserted": 0,
-      "remaining": 10,
+      "remaining": 3,
       "message": "https://mopsov.twse.com.tw:pub:2026Q1:解析0檔"
     },
     {
       "period": "2026Q2",
       "TYPEK": "sii",
       "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 5,
-      "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析0檔"
+      "parsed": 1,
+      "upserted": 1,
+      "remaining": 12,
+      "message": "https://mopsov.twse.com.tw:sii:2026Q2:解析1檔"
     },
     {
       "period": "2026Q2",
       "TYPEK": "otc",
       "status": "OK",
-      "parsed": 0,
-      "upserted": 0,
-      "remaining": 5,
-      "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析0檔"
+      "parsed": 8,
+      "upserted": 8,
+      "remaining": 4,
+      "message": "https://mopsov.twse.com.tw:otc:2026Q2:解析8檔"
     },
     {
       "period": "2026Q2",
       "TYPEK": "rotc",
-      "status": "ERROR",
+      "status": "OK",
       "parsed": 0,
       "upserted": 0,
-      "remaining": 5,
-      "message": "RuntimeError: https://mops.twse.com.tw:rotc:RuntimeError:MOPS季度彙總頁沒有可解析表格：ValueError:No tables found | ValueError:No tables found；https://mopsov.twse.com.tw:rotc:ConnectionError:HTTPSConnectionPool(host='mopsov.twse.com.tw', port=443): Max retries exceeded with url: /mops/web/ajax_t163sb04 (Caused by NewConnectionError(\"HTTPSConnection("
+      "remaining": 4,
+      "message": "https://mopsov.twse.com.tw:rotc:2026Q2:解析0檔"
     },
     {
       "period": "2026Q2",
@@ -100,7 +82,7 @@
       "status": "OK",
       "parsed": 0,
       "upserted": 0,
-      "remaining": 5,
+      "remaining": 4,
       "message": "https://mopsov.twse.com.tw:pub:2026Q2:解析0檔"
     }
   ],
