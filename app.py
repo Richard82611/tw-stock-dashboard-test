@@ -25,7 +25,7 @@ THEME_MAP_FILE = APP_DIR / "stock_theme_map.csv"
 INDUSTRY_MAP_FILE = APP_DIR / "stock_industry_map.csv"
 ACTIONS_URL = "https://github.com/jan770610-dot/tw-stock-dashboard-test/actions/workflows/daily-update.yml"
 
-st.set_page_config(page_title="台股分析中心 v3.6", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="台股分析中心 v3.6.1", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -2265,7 +2265,7 @@ def wade_chart(df, days=120):
 
 
 # ============================================================================
-# v3.6｜大盤實戰組合訊號 + 強勢族群雷達
+# v3.6.1｜大盤實戰組合訊號 + 強勢族群雷達（安全啟動版）
 # ----------------------------------------------------------------------------
 # 1) 實戰訊號不再只看單一總分，而是比較 Wade、RS強勢股方向、上漲比例、
 #    強勢股家數、新高/新低的「同步 / 背離」。
@@ -2395,16 +2395,18 @@ def _local_industry_map():
     return out.dropna(subset=["代號"]).drop_duplicates("代號",keep="last")
 
 
-@st.cache_data(show_spinner=False, ttl=86400)
+@st.cache_data(show_spinner=False)
 def official_industry_map():
+    """v3.6.1 安全版：網站啟動時絕不連外，只讀專案內的靜態產業對照表。
+
+    產業資料的更新應由盤後更新流程建立 stock_industry_map.csv，
+    而不是在 Streamlit 冷啟動時向外部網站發 HTTP 請求。
+    這樣即使官方端暫時逾時/阻擋，Dashboard 仍一定可以啟動。
+    """
     local=_local_industry_map()
-    api=_official_industry_openapi()
-    isin=_official_industry_isin()
-    frames=[z for z in [isin,api,local] if z is not None and not z.empty]
-    if not frames: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
-    # 後面的資料優先；本機表可覆寫官方分類，方便特殊個案修正。
-    out=pd.concat(frames,ignore_index=True)
-    return out.drop_duplicates("代號",keep="last")
+    if local is not None and not local.empty:
+        return local.drop_duplicates("代號",keep="last")
+    return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
 
 
 def _theme_map():
