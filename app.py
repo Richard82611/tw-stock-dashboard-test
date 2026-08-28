@@ -27,7 +27,7 @@ INDUSTRY_MAP_FILE = APP_DIR / "stock_industry_map.csv"
 GROUP_HISTORY_FILE = APP_DIR / "group_history.csv"
 ACTIONS_URL = "https://github.com/jan770610-dot/tw-stock-dashboard-test/actions/workflows/daily-update.yml"
 
-st.set_page_config(page_title="台股分析中心 v3.8", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="台股分析中心 v3.9", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -2718,7 +2718,7 @@ def sector_radar(strong_df, current_date=None):
 # 所有歷史報酬均以 D 日狀態確認、D+1 收盤作為第一個可交易基準；
 # 只提供條件式歷史分布，不宣稱因果或保證未來。
 # ============================================================================
-FORECAST_VERSION = "v3.8｜下一階段機率＋路徑風險報酬＋訊號有效期限＋族群下一棒"
+FORECAST_VERSION = "v3.9｜劇本樹＋失效雷達＋領先時間差＋下一階段機率＋路徑風險報酬＋族群下一棒"
 
 
 def _forecast_stage_bucket(stage_value):
@@ -3045,6 +3045,340 @@ def market_forecast_action(scenarios, path_info, practical):
         action="維持現有曝險，優先做萌芽／發動族群，不因單一路徑擴大部位"
     return {"標籤":label,"動作":action,"依據":f"D+10偏多/改善 {bull:.1f}%｜轉弱/防守 {weak:.1f}%｜20日中位 {safe_num(med,2,'%')}｜上漲率 {safe_num(win,1,'%')}"}
 
+
+# ============================================================================
+# v3.9｜劇本與失效管理
+# ---------------------------------------------------------------------------
+# 把前瞻從「一次性預測」升級成可管理的交易劇本：
+# 1) 主劇本 / 備用劇本：D+10 歷史分布對應明確成立與切換條件。
+# 2) 劇本失效雷達：不是單一指標變差就翻空，而是多項結構同步破壞才降級。
+# 3) 領先時間差：回看每次市場轉強 / 高檔轉弱前，各內部訊號通常提前幾天出現。
+# 所有統計仍只用當時及以前資料；歷史報酬沿用 D+1 收盤起算。
+# ============================================================================
+
+def forecast_scenario_tree(scenarios, daily_df, row):
+    empty={"ok":False,"reason":"D+10歷史分布不足","main":"—","main_key":"none","table":pd.DataFrame(),"dominance":"—"}
+    if not scenarios or not scenarios.get("ok"):
+        return empty
+    s=scenarios.get("summary")
+    if s is None or s.empty:
+        return empty
+    hit=s[s["觀察期"]=="D+10"]
+    r=hit.iloc[0] if not hit.empty else s.iloc[0]
+    probs={
+        "bull":_num(r.get("偏多/改善%"),0) or 0,
+        "flat":_num(r.get("整理%"),0) or 0,
+        "weak":_num(r.get("轉弱/防守%"),0) or 0,
+    }
+    labels={"bull":"🟢 偏多／改善","flat":"🟡 震盪整理","weak":"🔴 轉弱／防守"}
+    ordered=sorted(probs.items(),key=lambda kv:kv[1],reverse=True)
+    main_key=ordered[0][0]
+    gap=ordered[0][1]-ordered[1][1] if len(ordered)>=2 else ordered[0][1]
+    dominance="主劇本較明確" if gap>=15 else "多劇本接近，需靠觸發條件分流"
+
+    w=_num(first_value(row,["Wade內部強度分數"]))
+    w5=_num(first_value(row,["Wade分數5日變化"]))
+    adv=_num(first_value(row,["上漲比例%"]))
+    direction=text(first_value(row,["強勢股方向"]),"—")
+    nh=_num(first_value(row,["52週新高家數"]))
+    nl=_num(first_value(row,["52週新低家數"]))
+
+    bull_checks=[
+        w is not None and w>=60,
+        adv is not None and adv>=52,
+        direction in {"增加","明顯增加"},
+        nh is not None and nl is not None and nh>=nl,
+        w5 is not None and w5>=0,
+    ]
+    weak_checks=[
+        w is not None and w<45,
+        adv is not None and adv<45,
+        direction in {"減少","明顯減少"},
+        nh is not None and nl is not None and nl>nh,
+        w5 is not None and w5<=-5,
+    ]
+    flat_checks=[
+        w is not None and 45<=w<=65,
+        adv is not None and 45<=adv<=55,
+        direction in {"持平","—"},
+        w5 is not None and abs(w5)<5,
+    ]
+    counts={"bull":sum(bull_checks),"flat":sum(flat_checks),"weak":sum(weak_checks)}
+    denoms={"bull":sum(x is not None for x in [w,adv,direction if direction!="—" else None,nh if nl is not None else None,w5]),
+            "flat":sum(x is not None for x in [w,adv,direction if direction!="—" else None,w5]),
+            "weak":sum(x is not None for x in [w,adv,direction if direction!="—" else None,nh if nl is not None else None,w5])}
+
+    specs={
+        "bull":{
+            "成立":"Wade≥60＋上漲比例≥52%＋RS方向增加；新高不弱於新低，Wade 5日不再惡化",
+            "切換":"Wade跌破50、上漲比例跌破50%、RS方向轉減少時，偏多劇本降級",
+            "操作":"正式進場閘門通過時可布局／持有；確認項增加才提高曝險，不因機率單獨追價",
+        },
+        "flat":{
+            "成立":"Wade約45–65、上漲比例約45–55%，RS方向與5日變化沒有一致趨勢",
+            "切換":"Wade≥60＋廣度擴張切偏多；Wade<45＋RS/廣度同步轉弱切防守",
+            "操作":"維持中等曝險，優先萌芽／發動族群；等待向上或向下分支確認",
+        },
+        "weak":{
+            "成立":"Wade<45或5日快速轉弱＋上漲比例<45%＋RS方向減少；新低開始壓過新高",
+            "切換":"Wade重回50–60、上漲比例≥50–55%、RS方向轉增加時，弱勢劇本失效",
+            "操作":"降低新開倉與追價；先保護獲利，重新轉強後才恢復風險預算",
+        },
+    }
+    rows=[]
+    for k,_ in ordered:
+        d=denoms.get(k,0)
+        evidence=f"{counts.get(k,0)}/{d} 項" if d else "資料不足"
+        rows.append({
+            "劇本":("★ " if k==main_key else "")+labels[k],
+            "D+10歷史比例%":round(probs[k],1),
+            "目前證據":evidence,
+            "成立條件":specs[k]["成立"],
+            "切換/失效條件":specs[k]["切換"],
+            "操作":specs[k]["操作"],
+        })
+    return {
+        "ok":True,"reason":"","main":labels[main_key],"main_key":main_key,
+        "main_prob":round(probs[main_key],1),"dominance":dominance,
+        "table":pd.DataFrame(rows),"probs":probs,"current_counts":counts,
+    }
+
+
+
+def previous_day_forecast_script(daily_df):
+    """用『截至上一交易日』的資料重建昨天收盤時能得到的劇本。
+
+    不儲存新檔，也不偷看今天資料；每次開頁都可由正式歷史重算。
+    """
+    if daily_df is None or len(daily_df)<121:
+        return {"ok":False,"reason":"正式歷史不足","main":"—","asof":"—"}
+    hist=daily_df.iloc[:-1].copy().reset_index(drop=True)
+    if hist.empty:
+        return {"ok":False,"reason":"上一交易日資料不足","main":"—","asof":"—"}
+    try:
+        nav=wade_market_navigation(hist)
+        scenarios=market_forward_scenarios(hist,nav)
+        script=forecast_scenario_tree(scenarios,hist,hist.iloc[-1])
+        date_col=_nav_first_col(hist,["日期","date"])
+        asof="—"
+        if date_col:
+            d=pd.to_datetime(hist.iloc[-1].get(date_col),errors="coerce")
+            if pd.notna(d): asof=d.strftime("%Y-%m-%d")
+        script["asof"]=asof
+        script["source"]="上一交易日重建"
+        return script
+    except Exception as e:
+        return {"ok":False,"reason":f"上一交易日劇本重建失敗：{e}","main":"—","asof":"—"}
+
+
+def forecast_invalidation_radar(daily_df, row, scenario_tree, sector):
+    """追蹤主劇本是否被市場內部結構破壞。
+
+    severity: 0=正常、1=弱化/注意、2=明確破壞。
+    對整理主劇本，這裡顯示的是「分支切換壓力」，不是把突破也稱為失效。
+    """
+    empty={"ok":False,"reason":"主劇本不足","狀態":"⚪ 無劇本","壓力":None,"table":pd.DataFrame(),"mode":"invalid"}
+    if not scenario_tree or not scenario_tree.get("ok"):
+        return empty
+    key=scenario_tree.get("main_key","none")
+    x=daily_df if daily_df is not None else pd.DataFrame()
+
+    w=_num(first_value(row,["Wade內部強度分數"]))
+    w5=_num(first_value(row,["Wade分數5日變化"]))
+    adv=_num(first_value(row,["上漲比例%"]))
+    direction=text(first_value(row,["強勢股方向"]),"—")
+    nh=_num(first_value(row,["52週新高家數"]))
+    nl=_num(first_value(row,["52週新低家數"]))
+    sc=_num(first_value(row,["強勢股檔數"]))
+    sc3=None
+    if x is not None and len(x)>=4 and "強勢股檔數" in x.columns:
+        past=_num(x.iloc[-4].get("強勢股檔數"))
+        if sc is not None and past is not None and past>0:
+            sc3=(sc/past-1)*100
+
+    top_theme=None
+    themes=(sector or {}).get("題材")
+    if themes is not None and not themes.empty:
+        top_theme=themes.iloc[0]
+    tlife=text(top_theme.get("生命週期"),"—") if top_theme is not None else "—"
+    td1=_num(top_theme.get("1日強度變化")) if top_theme is not None else None
+    tname=text(top_theme.get("題材族群"),"—") if top_theme is not None else "—"
+
+    rows=[]
+    def add(name,severity,current,meaning):
+        sev=int(severity)
+        rows.append({
+            "監控項目":name,
+            "狀態":"🔴 破壞" if sev>=2 else "🟡 弱化" if sev==1 else "🟢 正常",
+            "目前":current,
+            "判讀":meaning,
+            "_sev":sev,
+        })
+
+    if key=="bull":
+        sev=2 if ((w is not None and w<45) or (w5 is not None and w5<=-8)) else 1 if ((w is not None and w<55) or (w5 is not None and w5<=-3)) else 0
+        add("Wade結構",sev,f"{safe_num(w,1)}｜5日 {safe_num(w5,1)}","偏多劇本需要 Wade 不跌回弱勢區，且5日惡化不能持續")
+        sev=2 if (adv is not None and adv<45) else 1 if (adv is not None and adv<50) else 0
+        add("上漲廣度",sev,safe_num(adv,1,"%"),"低於50%代表擴散停止；低於45%視為明顯破壞")
+        sev=2 if direction=="明顯減少" else 1 if direction=="減少" else 0
+        add("RS強勢股方向",sev,direction,"偏多劇本最怕強勢股池開始持續收縮")
+        sev=2 if (nh is not None and nl is not None and nl>=max(5,nh*1.5)) else 1 if (nh is not None and nl is not None and nl>nh) else 0
+        add("新高/新低",sev,f"{safe_num(nh,0)} / {safe_num(nl,0)}","新低壓過新高代表內部風險開始擴散")
+        sev=2 if (sc3 is not None and sc3<=-15) else 1 if (sc3 is not None and sc3<=-7) else 0
+        add("強勢股3日變化",sev,safe_num(sc3,1,"%"),"3日快速萎縮比單日減少更值得提高警戒")
+        sev=2 if (tlife.startswith("🟠") or (td1 is not None and td1<=-10)) else 1 if (tlife.startswith("🟡") or (td1 is not None and td1<=-5)) else 0
+        add("第一主流族群",sev,f"{tname}｜{tlife}｜1日 {safe_num(td1,1)}","主流若由鈍化進一步退潮，偏多劇本可信度下降")
+        mode="invalid"
+    elif key=="weak":
+        sev=2 if ((w is not None and w>=60) and (w5 is None or w5>=0)) else 1 if (w is not None and w>=50) else 0
+        add("Wade修復",sev,f"{safe_num(w,1)}｜5日 {safe_num(w5,1)}","弱勢劇本最怕 Wade 重回50–60且5日轉正")
+        sev=2 if (adv is not None and adv>=55) else 1 if (adv is not None and adv>=50) else 0
+        add("上漲廣度修復",sev,safe_num(adv,1,"%"),"廣度重新超過50–55%會逐步推翻弱勢劇本")
+        sev=2 if direction=="明顯增加" else 1 if direction=="增加" else 0
+        add("RS方向修復",sev,direction,"強勢股重新擴張是弱勢劇本的重要失效條件")
+        sev=2 if (nh is not None and nl is not None and nh>=max(5,nl*1.5)) else 1 if (nh is not None and nl is not None and nh>nl) else 0
+        add("新高/新低修復",sev,f"{safe_num(nh,0)} / {safe_num(nl,0)}","新高重新壓過新低，代表風險開始收斂")
+        sev=2 if (sc3 is not None and sc3>=15) else 1 if (sc3 is not None and sc3>=7) else 0
+        add("強勢股3日回升",sev,safe_num(sc3,1,"%"),"強勢股池快速擴張會使防守劇本失效")
+        sev=2 if ((tlife.startswith("🌱") or tlife.startswith("🟢") or tlife.startswith("🔥")) and td1 is not None and td1>=5) else 1 if (td1 is not None and td1>0) else 0
+        add("第一主流族群修復",sev,f"{tname}｜{tlife}｜1日 {safe_num(td1,1)}","領先族群先轉強常早於整體市場確認")
+        mode="invalid"
+    else:
+        # 整理劇本：同時計算向上/向下切換壓力，越高代表越接近離開整理。
+        bull=0; weak=0
+        bull += 2 if (w is not None and w>=60) else 0
+        bull += 2 if (adv is not None and adv>=55) else 0
+        bull += 2 if direction in {"增加","明顯增加"} else 0
+        bull += 2 if (w5 is not None and w5>=5) else 0
+        weak += 2 if (w is not None and w<45) else 0
+        weak += 2 if (adv is not None and adv<45) else 0
+        weak += 2 if direction in {"減少","明顯減少"} else 0
+        weak += 2 if (w5 is not None and w5<=-5) else 0
+        add("向上突破壓力",2 if bull>=6 else 1 if bull>=4 else 0,f"{bull}/8","Wade、廣度、RS、5日變化同步轉強時，整理劇本切換偏多")
+        add("向下破壞壓力",2 if weak>=6 else 1 if weak>=4 else 0,f"{weak}/8","Wade、廣度、RS、5日變化同步轉弱時，整理劇本切換防守")
+        mode="switch"
+
+    df=pd.DataFrame(rows)
+    sevsum=int(df["_sev"].sum()) if not df.empty else 0
+    maxsum=max(1,2*len(df))
+    pressure=round(sevsum/maxsum*100,0)
+    red=int((df["_sev"]>=2).sum()) if not df.empty else 0
+    if mode=="switch":
+        status="🟠 接近分支切換" if red>=1 or pressure>=45 else "🟡 整理劇本仍有效"
+    else:
+        status="🔴 主劇本已失效" if red>=2 or pressure>=60 else "🟠 主劇本接近失效" if red>=1 or pressure>=35 else "🟡 主劇本開始弱化" if pressure>=15 else "🟢 主劇本完整"
+    return {"ok":True,"reason":"","狀態":status,"壓力":pressure,"table":df.drop(columns=["_sev"]),"mode":mode,"red_count":red}
+
+
+def _leading_signal_table(daily_df, event_kind="bull", lookback=10):
+    if daily_df is None or len(daily_df)<120:
+        return pd.DataFrame(),0
+    x=daily_df.copy().reset_index(drop=True)
+    stage_col=_nav_first_col(x,["市場階段","Wade市場狀態","market_state"])
+    if not stage_col:
+        return pd.DataFrame(),0
+
+    def num_series(names):
+        c=_nav_first_col(x,names)
+        return pd.to_numeric(x[c],errors="coerce") if c else None
+    def txt_series(names):
+        c=_nav_first_col(x,names)
+        return x[c].fillna("").astype(str) if c else None
+
+    direction=txt_series(["強勢股方向"])
+    spread=num_series(["5日-20日廣度差"])
+    wade=num_series(["Wade內部強度分數"])
+    w5=num_series(["Wade分數5日變化"])
+    adv=num_series(["上漲比例%"])
+    nh=num_series(["52週新高家數"])
+    nl=num_series(["52週新低家數"])
+    lead=num_series(["主流延續分數"])
+
+    signals={}
+    if event_kind=="bull":
+        if direction is not None: signals["RS方向轉增"]=direction.isin(["增加","明顯增加"])
+        if spread is not None: signals["5日廣度差翻正"]=spread>0
+        if wade is not None and w5 is not None: signals["Wade≥50且5日轉正"]=(wade>=50)&(w5>0)
+        if adv is not None: signals["上漲比例≥50%"]=adv>=50
+        if nh is not None and nl is not None: signals["新高≥新低"]=nh>=nl
+        if lead is not None: signals["主流延續≥50"]=lead>=50
+        targets={"中段回升","高檔續強"}
+    else:
+        if direction is not None: signals["RS方向轉弱"]=direction.isin(["減少","明顯減少"])
+        if spread is not None: signals["5日廣度差轉負"]=spread<0
+        if w5 is not None: signals["Wade5日≤-5"]=w5<=-5
+        if adv is not None: signals["上漲比例<50%"]=adv<50
+        if nh is not None and nl is not None: signals["新低>新高"]=nl>nh
+        if lead is not None: signals["主流延續<45"]=lead<45
+        targets={"高檔轉弱"}
+
+    if not signals:
+        return pd.DataFrame(),0
+
+    stages=x[stage_col].fillna("").astype(str)
+    event_idx=[]
+    for i in range(1,len(x)-1):  # 排除今天
+        if stages.iloc[i] in targets and stages.iloc[i-1] not in targets:
+            event_idx.append(i)
+    if not event_idx:
+        return pd.DataFrame(),0
+
+    rows=[]
+    for name,flag in signals.items():
+        flag=flag.fillna(False).astype(bool).reset_index(drop=True)
+        crossings=flag & ~flag.shift(1,fill_value=False)
+        leads=[]
+        for e in event_idx:
+            start=max(0,e-lookback)
+            hits=[i for i in range(start,e+1) if bool(crossings.iloc[i])]
+            if hits:
+                leads.append(e-max(hits))  # 使用事件前最近一次啟動
+        if not leads:
+            continue
+        rows.append({
+            "前導訊號":name,
+            "事件數":len(event_idx),
+            "有前導樣本":len(leads),
+            "覆蓋率%":round(len(leads)/len(event_idx)*100,1),
+            "中位領先日":round(_nav_median(leads),1),
+            "平均領先日":round(_nav_mean(leads),1),
+            "80%領先日":round(float(pd.Series(leads).quantile(.8)),1),
+            "_active":bool(flag.iloc[-1]),
+        })
+    if not rows:
+        return pd.DataFrame(),len(event_idx)
+    out=pd.DataFrame(rows).sort_values(["覆蓋率%","中位領先日"],ascending=[False,False]).reset_index(drop=True)
+    return out,len(event_idx)
+
+
+def leading_lag_study(daily_df):
+    bull,bull_events=_leading_signal_table(daily_df,"bull",10)
+    risk,risk_events=_leading_signal_table(daily_df,"risk",10)
+    active_rows=[]
+    for kind,tab in [("🟢 轉強前導",bull),("🟠 風險前導",risk)]:
+        if tab is None or tab.empty: continue
+        for _,r in tab[tab["_active"]==True].iterrows():
+            active_rows.append({
+                "類型":kind,
+                "目前啟動訊號":r["前導訊號"],
+                "歷史覆蓋率%":r["覆蓋率%"],
+                "中位領先日":r["中位領先日"],
+                "樣本事件":r["事件數"],
+            })
+    active=pd.DataFrame(active_rows)
+    if not active.empty:
+        active=active.sort_values(["類型","歷史覆蓋率%"],ascending=[True,False]).reset_index(drop=True)
+    def clean(tab):
+        if tab is None or tab.empty: return pd.DataFrame()
+        return tab.drop(columns=["_active"])
+    return {
+        "ok":not clean(bull).empty or not clean(risk).empty,
+        "bull":clean(bull),"risk":clean(risk),"active":active,
+        "bull_events":bull_events,"risk_events":risk_events,
+        "reason":"歷史欄位不足" if clean(bull).empty and clean(risk).empty else "",
+    }
+
+
 def _trend_arrow(v, flat=0.0):
     if v is None: return "—"
     if v>flat: return "↑"
@@ -3240,6 +3574,16 @@ forecast_structural_baton=structural_next_baton(sector_info)
 forecast_group_history=_load_group_history()
 forecast_migration=historical_group_migration(forecast_group_history,sector_info.get("題材",pd.DataFrame()))
 forecast_action=market_forecast_action(forecast_scenarios,forecast_path,practical_signal)
+forecast_script=forecast_scenario_tree(forecast_scenarios,daily,rs_latest)
+forecast_previous_script=previous_day_forecast_script(daily)
+forecast_tracked_script=forecast_previous_script if forecast_previous_script.get("ok") else forecast_script
+forecast_invalidation=forecast_invalidation_radar(daily,rs_latest,forecast_tracked_script,sector_info)
+forecast_leadlag=leading_lag_study(daily)
+forecast_script_change=(
+    "➡️ 劇本延續" if forecast_previous_script.get("ok") and forecast_previous_script.get("main_key")==forecast_script.get("main_key")
+    else "🔄 今日主劇本已切換" if forecast_previous_script.get("ok") and forecast_script.get("ok")
+    else "⚪ 尚無昨日劇本"
+)
 evidence_ladder=wade_evidence_ladder(daily,rs_latest)
 daily_change_evidence=wade_daily_change_explainer(daily)
 if signal_active(early_signal) and water not in {"極低水位","偏低水位"} and market_regime_current.startswith("🔴"):
@@ -4785,7 +5129,7 @@ with tabs[7]:
 
 
 with tabs[8]:
-    st.subheader("🔮 市場前瞻引擎｜歷史推演下一步，不只描述今天")
+    st.subheader("🔮 市場前瞻引擎 v3.9｜劇本、失效、領先時間差")
     st.caption(
         f"{FORECAST_VERSION}。核心原則：今天的正式狀態先確定，再用歷史相似日推演 D+5／D+10／D+20；"
         "報酬由 D+1 收盤起算。機率是歷史條件分布，不是保證，也不會覆蓋既有進出場規則。"
@@ -4801,6 +5145,8 @@ with tabs[8]:
     expiry_main=(f"{forecast_expiry.get('current_stage','—')} 第{forecast_expiry.get('current_age',0)}天" if forecast_expiry.get("ok") else "資料不足")
     baton_main="歷史遷徙已啟用" if forecast_migration.get("ok") else ("結構候選" if forecast_structural_baton is not None and not forecast_structural_baton.empty else "累積中")
     cards([
+        ("主劇本",forecast_script.get("main","—"),f"D+10 {safe_num(forecast_script.get('main_prob'),1,'%')}｜{forecast_script.get('dominance','—')}"),
+        ("昨日劇本追蹤",forecast_invalidation.get("狀態","—"),f"{forecast_script_change}｜追蹤 {forecast_tracked_script.get('asof','今日')} {forecast_tracked_script.get('main','—')}"),
         ("前瞻總結",forecast_action.get("標籤","—"),forecast_action.get("依據","—")),
         ("D+10 最常見情境",d10_main,d10_mix),
         ("20日歷史路徑",forecast_path.get("標籤","—"),forecast_path.get("說明","—")),
@@ -4815,7 +5161,75 @@ with tabs[8]:
         unsafe_allow_html=True,
     )
 
-    st.write("### ① 下一階段機率｜5／10／20日後最可能在哪裡？")
+
+    st.write("### ① 劇本樹｜先決定主劇本，再等市場自己選路")
+    if forecast_script.get("ok"):
+        script_table=forecast_script.get("table",pd.DataFrame())
+        main_prob=forecast_script.get("main_prob")
+        decision_cards([
+            ("主劇本",forecast_script.get("main","—"),f"D+10歷史比例 {safe_num(main_prob,1,'%')}"),
+            ("劇本清晰度",forecast_script.get("dominance","—"),"不是只看最高機率；第二名很接近時就視為分歧"),
+            ("目前劇本狀態",forecast_invalidation.get("狀態","—"),f"失效/切換壓力 {safe_num(forecast_invalidation.get('壓力'),0,'%')}"),
+        ])
+        st.dataframe(script_table,hide_index=True,use_container_width=True,height=min(430,90+70*len(script_table)))
+        if forecast_previous_script.get("ok"):
+            st.info(
+                f"**昨日劇本：** {forecast_previous_script.get('asof','—')}｜{forecast_previous_script.get('main','—')} "
+                f"({safe_num(forecast_previous_script.get('main_prob'),1,'%')})　→　"
+                f"**今日重算：** {forecast_script.get('main','—')} ({safe_num(forecast_script.get('main_prob'),1,'%')})｜{forecast_script_change}"
+            )
+        st.caption("主劇本是歷史條件分布，不是命令。真正有用的是右側兩欄：『成立條件』與『切換/失效條件』；失效雷達刻意追蹤『昨日收盤時的劇本』，避免今天重算後把昨天的錯誤藏掉。")
+    else:
+        st.info(f"劇本樹暫不可用：{forecast_script.get('reason','歷史條件不足')}")
+
+    st.write("### ② 預測失效雷達｜追蹤上一交易日的劇本，今天有沒有被市場打臉")
+    if forecast_invalidation.get("ok"):
+        inv=forecast_invalidation.get("table",pd.DataFrame())
+        status=forecast_invalidation.get("狀態","—")
+        pressure=forecast_invalidation.get("壓力")
+        if str(status).startswith("🔴"):
+            st.error(f"**{status}**｜結構壓力 {safe_num(pressure,0,'%')}。主劇本已被多項市場內部訊號同步破壞，應切到備用劇本。")
+        elif str(status).startswith("🟠"):
+            st.warning(f"**{status}**｜結構壓力 {safe_num(pressure,0,'%')}。先停止擴大曝險，等待下一個正式確認。")
+        elif str(status).startswith("🟡"):
+            st.info(f"**{status}**｜結構壓力 {safe_num(pressure,0,'%')}。目前仍可沿用主劇本，但要盯著弱化項目。")
+        else:
+            st.success(f"**{status}**｜結構壓力 {safe_num(pressure,0,'%')}。目前沒有足夠證據推翻主劇本。")
+        st.dataframe(inv,hide_index=True,use_container_width=True,height=min(470,80+55*len(inv)))
+        st.caption(f"目前追蹤基準：{forecast_tracked_script.get('asof','—')} 的 {forecast_tracked_script.get('main','—')}。失效雷達採多項結構同步確認；單一天 Wade 下滑或單日強勢股減少，不會自動翻轉劇本。")
+    else:
+        st.info(f"失效雷達暫不可用：{forecast_invalidation.get('reason','主劇本尚未建立')}")
+
+    st.write("### ③ 領先時間差｜哪些訊號通常早於真正轉強／轉弱？")
+    if forecast_leadlag.get("ok"):
+        active=forecast_leadlag.get("active",pd.DataFrame())
+        if active is not None and not active.empty:
+            st.markdown("**目前正在啟動的歷史前導訊號**")
+            st.dataframe(active,hide_index=True,use_container_width=True,height=min(350,80+40*len(active)))
+            st.caption("例如『中位領先3日』的意思是：在有成功覆蓋的歷史事件裡，該訊號啟動到正式市場階段確認的中位時間約3個交易日；不是倒數計時。")
+        else:
+            st.caption("目前沒有足夠明顯、且歷史上可辨識的前導訊號正在啟動。")
+        lc1,lc2=st.columns(2)
+        with lc1:
+            st.markdown(f"**🟢 轉強前導｜歷史轉強事件 {forecast_leadlag.get('bull_events',0)} 次**")
+            bt=forecast_leadlag.get("bull",pd.DataFrame())
+            if bt is not None and not bt.empty:
+                st.dataframe(bt,hide_index=True,use_container_width=True,height=390)
+            else:
+                st.caption("可用欄位／歷史事件不足。")
+        with lc2:
+            st.markdown(f"**🟠 高檔轉弱前導｜歷史事件 {forecast_leadlag.get('risk_events',0)} 次**")
+            rt=forecast_leadlag.get("risk",pd.DataFrame())
+            if rt is not None and not rt.empty:
+                st.dataframe(rt,hide_index=True,use_container_width=True,height=390)
+            else:
+                st.caption("可用欄位／歷史事件不足。")
+        st.caption("覆蓋率＝歷史事件前10個交易日內曾出現該訊號的比例。只研究事件發生前已可看見的資料，不使用未來資訊。")
+    else:
+        st.info(f"領先時間差暫不可用：{forecast_leadlag.get('reason','歷史事件不足')}")
+
+
+    st.write("### ④ 下一階段機率｜5／10／20日後最可能在哪裡？")
     if forecast_scenarios.get("ok"):
         st.dataframe(fs,hide_index=True,use_container_width=True,height=min(230,80+42*len(fs)))
         dtab=forecast_scenarios.get("detail",{})
@@ -4829,7 +5243,7 @@ with tabs[8]:
     else:
         st.info(f"下一階段機率暫不可用：{forecast_scenarios.get('reason','歷史資料不足')}")
 
-    st.write("### ② 歷史路徑｜不只看20日後漲跌，也看中間會多痛")
+    st.write("### ⑤ 歷史路徑｜不只看20日後漲跌，也看中間會多痛")
     if forecast_path.get("ok"):
         decision_cards([
             ("20日中位報酬",safe_num(forecast_path.get("中位20%"),2,"%"),f"上漲率 {safe_num(forecast_path.get('上漲率20%'),1,'%')}｜樣本 {forecast_path.get('樣本',0)}"),
@@ -4844,7 +5258,7 @@ with tabs[8]:
     else:
         st.info(forecast_path.get("說明","路徑資料不足"))
 
-    st.write("### ③ 訊號有效期限｜現在是這個市場階段第幾天？還值得追嗎？")
+    st.write("### ⑥ 訊號有效期限｜現在是這個市場階段第幾天？還值得追嗎？")
     if forecast_expiry.get("ok"):
         decision_cards([
             ("目前階段",forecast_expiry.get("current_stage","—"),f"目前第 {forecast_expiry.get('current_age',0)} 天"),
@@ -4855,14 +5269,14 @@ with tabs[8]:
     else:
         st.info(f"有效期限暫不可用：{forecast_expiry.get('reason','資料不足')}")
 
-    st.write("### ④ 反常偵測｜弱市還被買、強市卻掉隊")
+    st.write("### ⑦ 反常偵測｜弱市還被買、強市卻掉隊")
     if forecast_anomaly is not None and not forecast_anomaly.empty:
         st.dataframe(forecast_anomaly.head(15),hide_index=True,use_container_width=True,height=min(520,80+38*min(15,len(forecast_anomaly))))
         st.caption("⭐逆勢吸金：市場偏弱但題材強度反升；⚠️順風掉隊：市場偏強但題材強度下降。這是相對資金偏好，不等於隔日一定上漲／下跌。")
     else:
         st.info("目前尚未出現足夠明顯的逆勢吸金／順風掉隊，或族群歷史仍在累積。")
 
-    st.write("### ⑤ 族群下一棒｜現在先看結構，歷史夠長後自動切換遷徙統計")
+    st.write("### ⑧ 族群下一棒｜現在先看結構，歷史夠長後自動切換遷徙統計")
     if forecast_migration.get("ok"):
         st.success(f"族群歷史已累積 {forecast_migration.get('days',0)} 個交易日，啟用『來源主流 → 5日內後續轉強題材』統計。")
         mig=forecast_migration.get("table",pd.DataFrame())
@@ -4876,4 +5290,4 @@ with tabs[8]:
         else:
             st.caption("目前沒有明顯的共享強勢股下一棒候選；等題材生命週期開始出現升溫差異後會更有意義。")
 
-st.divider(); st.caption(f"正式版 v3.8｜前瞻引擎 × 評分透明化 × 盤中/盤後計分一致｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
+st.divider(); st.caption(f"正式版 v3.9｜劇本與失效管理 × 前瞻引擎 × 評分透明化 × 盤中/盤後計分一致｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
