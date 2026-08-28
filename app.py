@@ -9,6 +9,7 @@ import html
 import json
 import math
 import re
+import csv
 import urllib.request
 import urllib.error
 
@@ -25,7 +26,7 @@ THEME_MAP_FILE = APP_DIR / "stock_theme_map.csv"
 INDUSTRY_MAP_FILE = APP_DIR / "stock_industry_map.csv"
 ACTIONS_URL = "https://github.com/jan770610-dot/tw-stock-dashboard-test/actions/workflows/daily-update.yml"
 
-st.set_page_config(page_title="台股分析中心 v3.6.1", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="台股分析中心 v3.6.2", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -2265,7 +2266,7 @@ def wade_chart(df, days=120):
 
 
 # ============================================================================
-# v3.6.1｜大盤實戰組合訊號 + 強勢族群雷達（安全啟動版）
+# v3.6.2｜大盤實戰組合訊號 + 強勢族群雷達（產業分類備援版）
 # ----------------------------------------------------------------------------
 # 1) 實戰訊號不再只看單一總分，而是比較 Wade、RS強勢股方向、上漲比例、
 #    強勢股家數、新高/新低的「同步 / 背離」。
@@ -2395,18 +2396,73 @@ def _local_industry_map():
     return out.dropna(subset=["代號"]).drop_duplicates("代號",keep="last")
 
 
-@st.cache_data(show_spinner=False)
-def official_industry_map():
-    """v3.6.1 安全版：網站啟動時絕不連外，只讀專案內的靜態產業對照表。
+@st.cache_data(show_spinner=False, ttl=86400)
+def _remote_industry_cache():
+    """從 GitHub 上的官方 ISIN 資料鏡像建立上市／上櫃產業對照。
 
-    產業資料的更新應由盤後更新流程建立 stock_industry_map.csv，
-    而不是在 Streamlit 冷啟動時向外部網站發 HTTP 請求。
-    這樣即使官方端暫時逾時/阻擋，Dashboard 仍一定可以啟動。
+    只在本機 stock_industry_map.csv 沒有有效內容時使用；任何網路錯誤都直接
+    回傳空表，不得影響 Dashboard 啟動。資料來源專案是把 TWSE ISIN 公開資料
+    轉成 UTF-8 CSV 的鏡像，這裡只收 4 碼普通股票且產業別非空白的紀錄。
+    """
+    sources=[
+        ("上市","https://raw.githubusercontent.com/changtimwu/twse-dataset/refs/heads/main/twse_stock_list.csv"),
+        ("上櫃","https://raw.githubusercontent.com/changtimwu/twse-dataset/refs/heads/main/twse_otc_stocks.csv"),
+    ]
+    rows=[]
+    for market,url in sources:
+        try:
+            req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0","Accept":"text/plain,*/*"})
+            with urllib.request.urlopen(req,timeout=8) as resp:
+                raw=resp.read().decode("utf-8-sig","ignore")
+            for parts in csv.reader(StringIO(raw)):
+                if len(parts)<6:
+                    continue
+                first=str(parts[0]).strip()
+                m=re.match(r"^(\d{4})(?:\s|　)+",first)
+                if not m:
+                    continue
+                industry=str(parts[4]).strip()
+                cfi=str(parts[5]).strip().upper()
+                if not industry:
+                    continue
+                # 普通股票多為 ES 開頭；排除 ETF、權證、債券等。
+                if cfi and not cfi.startswith("ES"):
+                    continue
+                rows.append({
+                    "代號":m.group(1),
+                    "官方產業別":_industry_zh(industry),
+                    "產業來源":"官方ISIN快取",
+                    "市場":market,
+                })
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    out=pd.DataFrame(rows).drop_duplicates("代號",keep="last")
+    return out[["代號","官方產業別","產業來源"]]
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def official_industry_map():
+    """產業分類：本機對照優先；本機空白時才使用安全的 ISIN 快取備援。
+
+    v3.6.2 仍維持『網路失敗不能拖垮網站』：遠端抓取被完整包在 try/except，
+    8 秒逾時後就回空表；之後只會顯示分類資料不足，不會讓 app.py 停止。
     """
     local=_local_industry_map()
-    if local is not None and not local.empty:
-        return local.drop_duplicates("代號",keep="last")
-    return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    remote=pd.DataFrame()
+    # 空白安全檔只有表頭時不算有效分類；有實際資料則直接使用並允許人工覆寫。
+    if local is None or local.empty:
+        remote=_remote_industry_cache()
+        return remote if remote is not None else pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+
+    # 本機表若只有少量人工修正，仍用遠端補足其餘股票，再由本機覆寫同代號。
+    if len(local)<500:
+        remote=_remote_industry_cache()
+        if remote is not None and not remote.empty:
+            out=pd.concat([remote,local],ignore_index=True)
+            return out.drop_duplicates("代號",keep="last")
+    return local.drop_duplicates("代號",keep="last")
 
 
 def _theme_map():
@@ -3656,7 +3712,7 @@ else:
         ("復甦候選", f"{len(recovery):,} 檔", "觀察 → 左側試單 → 接近右側確認"),
     ])
 
-tabs=st.tabs(["🏠 正式基準","🎯 個股決策中心","📊 RS／市場廣度","🧭 Wade大盤強弱","🌱 復甦候選","📐 台指期","🧪 資料品質","🔄 更新資料"])
+tabs=st.tabs(["🏠 正式基準","🎯 個股決策中心","🔥 RS／強勢族群","🧭 Wade大盤強弱","🌱 復甦候選","📐 台指期","🧪 資料品質","🔄 更新資料"])
 
 with tabs[0]:
     st.subheader("正式收盤基準／歷史比較")
@@ -3920,10 +3976,6 @@ with tabs[2]:
     st.markdown(stage_flow_html(stage),unsafe_allow_html=True)
     st.info(f"目前 RS 階段：{stage}｜{stage_plain(stage)}｜建議：{operation_action}")
     cards([("有效樣本",safe_num(first_value(rs_latest,["有效樣本數"]),0),""),("RS 強勢母池",safe_num(first_value(rs_latest,["RS強勢母池檔數"]),0),""),("強勢股",safe_num(strong_count,0),""),("占比",safe_num(strong_pct,2,"%"),""),("較前日",safe_num(change,0," 檔"),"")])
-    days=st.slider("歷史圖顯示交易日",30,min(500,len(daily)),min(180,len(daily)),10)
-    ch=breadth_chart(daily,days)
-    if ch is not None: st.altair_chart(ch,use_container_width=True)
-
     st.write("### 🔥 強勢族群雷達｜今天資金集中在哪裡？")
     sec_meta=sector_info.get("meta",{})
     sec_ind=sector_info.get("產業",pd.DataFrame())
@@ -3940,13 +3992,17 @@ with tabs[2]:
         top_text="；".join([f"{r['排名']}. {r['官方產業別']} {r['狀態']}（{r['強勢股家數']}檔／強度{r['族群強度']}）" for _,r in top3.iterrows()])
         st.info(f"**今日產業主軸：** {top_text}")
     else:
-        st.warning("目前官方產業分類來源暫時不可用；強勢股仍正常顯示，但族群排名不會用名稱硬猜。")
+        st.warning("目前尚未取得產業分類；系統已嘗試本機對照表與官方ISIN快取。強勢股仍正常顯示，稍後重新整理即可再試，不會影響其他功能。")
     if sec_meta.get("題材表") and sec_theme is not None and not sec_theme.empty:
         with st.expander("🎯 交易題材／供應鏈族群",expanded=True):
             st.dataframe(sec_theme.head(15),hide_index=True,use_container_width=True,height=500)
     else:
         st.caption("題材層採可維護的 stock_theme_map.csv；未建立前只顯示官方產業別。這可避免把同產業公司自動誤判成 AI、機器人、CPO 等題材。")
     st.caption("族群強度＝35%平均RS＋30%強勢股集中度＋20%RS90以上比例＋15%成交金額集中度；只是當日截面排序，不是上漲機率。生命週期要累積每日族群快照後再啟用。")
+
+    days=st.slider("歷史圖顯示交易日",30,min(500,len(daily)),min(180,len(daily)),10)
+    ch=breadth_chart(daily,days)
+    if ch is not None: st.altair_chart(ch,use_container_width=True)
 
     st.write("**最新 RS 強勢股名單**")
     rs_q=st.text_input("搜尋代號／名稱",key="rs_search")
