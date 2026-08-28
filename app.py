@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 import datetime as dt
 from zoneinfo import ZoneInfo
 import html
 import json
 import math
+import re
+import urllib.request
+import urllib.error
 
 import altair as alt
 import pandas as pd
@@ -18,9 +21,11 @@ DEFAULT_RS = APP_DIR / "rs_latest.xlsx"
 DEFAULT_DUCK = APP_DIR / "duck_latest.xlsx"
 STATUS_FILE = APP_DIR / "update_status.json"
 INTRADAY_BASELINE_FILE = APP_DIR / "intraday_baseline.pkl.gz"
+THEME_MAP_FILE = APP_DIR / "stock_theme_map.csv"
+INDUSTRY_MAP_FILE = APP_DIR / "stock_industry_map.csv"
 ACTIONS_URL = "https://github.com/jan770610-dot/tw-stock-dashboard-test/actions/workflows/daily-update.yml"
 
-st.set_page_config(page_title="台股分析中心", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="台股分析中心 v3.6", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -2259,6 +2264,365 @@ def wade_chart(df, days=120):
     return (line+rules).properties(height=320)
 
 
+# ============================================================================
+# v3.6｜大盤實戰組合訊號 + 強勢族群雷達
+# ----------------------------------------------------------------------------
+# 1) 實戰訊號不再只看單一總分，而是比較 Wade、RS強勢股方向、上漲比例、
+#    強勢股家數、新高/新低的「同步 / 背離」。
+# 2) 族群雷達以官方產業別為穩定底層；若同目錄有 stock_theme_map.csv，
+#    再疊加交易題材/供應鏈。沒有題材表時不硬猜 AI、機器人、CPO 等概念。
+# 3) 「族群強度」是當日截面排序分數，不是上漲機率，也不是歷史回測勝率。
+# ============================================================================
+
+_INDUSTRY_EN_ZH = {
+    "Cement":"水泥工業", "Food":"食品工業", "Plastic":"塑膠工業",
+    "Textile":"紡織纖維", "Electric Machinery":"電機機械", "Electrical & Cable":"電器電纜",
+    "Chemical Industry":"化學工業", "Biotechnology and Medical Care":"生技醫療",
+    "Glass and Ceramic":"玻璃陶瓷", "Paper and Pulp":"造紙工業", "Iron & Steel":"鋼鐵工業",
+    "Rubber":"橡膠工業", "Automobile":"汽車工業", "Building Material and Construction":"建材營造",
+    "Shipping and Transportation":"航運業", "Tourism and Hospitality":"觀光餐旅",
+    "Financial and Insurance":"金融保險", "Trading and Consumers' Goods Industry":"貿易百貨",
+    "Oil, Gas and Electricity":"油電燃氣", "Semiconductors":"半導體業",
+    "Computer and Peripheral Equipment":"電腦及週邊設備", "Optoelectronics":"光電業",
+    "Communications Technology and Internet":"通信網路業", "Electronic Parts/Components":"電子零組件業",
+    "Electronic Products Distribution":"電子通路業", "Information Service":"資訊服務業",
+    "Other Electronic":"其他電子業", "Green Energy and Environmental Services":"綠能環保",
+    "Digital and Cloud Services":"數位雲端", "Sports and Leisure":"運動休閒",
+    "Household":"居家生活", "Cultural and Creative":"文化創意", "Agricultural Technology":"農業科技",
+    "E-Commerce":"電子商務", "Other":"其他業",
+}
+
+
+def _stock_code(v):
+    s=text(v,"").replace(".0","").strip()
+    m=re.match(r"^(\d{4})$",s)
+    return m.group(1) if m else s
+
+
+def _industry_zh(v):
+    s=text(v,"").strip()
+    return _INDUSTRY_EN_ZH.get(s,s)
+
+
+def _json_rows(raw):
+    if isinstance(raw,list): return raw
+    if isinstance(raw,dict):
+        for k in ["data","result","rows"]:
+            if isinstance(raw.get(k),list): return raw[k]
+    return []
+
+
+def _first_key(d, names):
+    for n in names:
+        if n in d and d.get(n) not in (None,""):
+            return d.get(n)
+    return None
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _official_industry_openapi():
+    """官方公司基本資料。若產業欄只有代碼，交由 ISIN 英文頁補名稱。"""
+    sources=[
+        ("TWSE","https://openapi.twse.com.tw/v1/opendata/t187ap03_L"),
+        ("TPEx","https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"),
+    ]
+    rows=[]
+    for market,url in sources:
+        try:
+            req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+            with urllib.request.urlopen(req,timeout=12) as resp:
+                raw=json.loads(resp.read().decode("utf-8-sig","ignore"))
+            for r in _json_rows(raw):
+                if not isinstance(r,dict): continue
+                code=_first_key(r,["公司代號","證券代號","股票代號","SecuritiesCompanyCode","Code"])
+                ind=_first_key(r,["產業別","產業類別","產業名稱","IndustrialGroup","Industry"])
+                if code is None: continue
+                code=_stock_code(code)
+                if not re.fullmatch(r"\d{4}",code): continue
+                ind=text(ind,"").strip()
+                # 純數字通常是產業代碼，不把代碼誤顯示成產業名稱。
+                if ind and not re.fullmatch(r"\d+",ind):
+                    rows.append({"代號":code,"官方產業別":_industry_zh(ind),"產業來源":f"{market} OpenAPI"})
+        except Exception:
+            continue
+    if not rows: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    return pd.DataFrame(rows).drop_duplicates("代號",keep="last")
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _official_industry_isin():
+    """ISIN 英文分類頁備援；只收四碼普通股票代號。"""
+    rows=[]
+    for market,mode in [("TWSE",2),("TPEx",4)]:
+        try:
+            url=f"https://isin.twse.com.tw/isin/e_C_public.jsp?strMode={mode}"
+            req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0"})
+            with urllib.request.urlopen(req,timeout=12) as resp:
+                raw=resp.read().decode("utf-8","ignore")
+            for tb in pd.read_html(StringIO(raw)):
+                z=tb.copy()
+                z.columns=[" ".join(str(q) for q in c if str(q)!="nan").strip() if isinstance(c,tuple) else str(c).strip() for c in z.columns]
+                code_col=next((c for c in z.columns if "Security Code" in c),None)
+                ind_col=next((c for c in z.columns if "Industrial Group" in c),None)
+                if not code_col or not ind_col: continue
+                for _,r in z[[code_col,ind_col]].iterrows():
+                    first=text(r.get(code_col),"")
+                    m=re.match(r"^\s*(\d{4})\b",first)
+                    if not m: continue
+                    ind=text(r.get(ind_col),"").strip()
+                    if not ind or ind.lower()=="nan": continue
+                    rows.append({"代號":m.group(1),"官方產業別":_industry_zh(ind),"產業來源":f"ISIN {market}"})
+        except Exception:
+            continue
+    if not rows: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    return pd.DataFrame(rows).drop_duplicates("代號",keep="last")
+
+
+def _local_industry_map():
+    if not INDUSTRY_MAP_FILE.exists():
+        return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    try:
+        z=pd.read_csv(INDUSTRY_MAP_FILE,dtype=str,encoding="utf-8-sig")
+    except Exception:
+        try: z=pd.read_csv(INDUSTRY_MAP_FILE,dtype=str)
+        except Exception: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    code_col=next((c for c in ["代號","股票代號","證券代號"] if c in z.columns),None)
+    ind_col=next((c for c in ["官方產業別","產業別","產業","類股"] if c in z.columns),None)
+    if not code_col or not ind_col: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    out=z[[code_col,ind_col]].rename(columns={code_col:"代號",ind_col:"官方產業別"}).copy()
+    out["代號"]=out["代號"].map(_stock_code); out["官方產業別"]=out["官方產業別"].map(_industry_zh)
+    out["產業來源"]="本機對照表"
+    return out.dropna(subset=["代號"]).drop_duplicates("代號",keep="last")
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def official_industry_map():
+    local=_local_industry_map()
+    api=_official_industry_openapi()
+    isin=_official_industry_isin()
+    frames=[z for z in [isin,api,local] if z is not None and not z.empty]
+    if not frames: return pd.DataFrame(columns=["代號","官方產業別","產業來源"])
+    # 後面的資料優先；本機表可覆寫官方分類，方便特殊個案修正。
+    out=pd.concat(frames,ignore_index=True)
+    return out.drop_duplicates("代號",keep="last")
+
+
+def _theme_map():
+    """可選：代號, 題材族群, 供應鏈。多題材可用 ｜、/、;、逗號 分隔。"""
+    if not THEME_MAP_FILE.exists():
+        return pd.DataFrame(columns=["代號","題材族群","供應鏈"])
+    try:
+        z=pd.read_csv(THEME_MAP_FILE,dtype=str,encoding="utf-8-sig")
+    except Exception:
+        try: z=pd.read_csv(THEME_MAP_FILE,dtype=str)
+        except Exception: return pd.DataFrame(columns=["代號","題材族群","供應鏈"])
+    if "代號" not in z.columns: return pd.DataFrame(columns=["代號","題材族群","供應鏈"])
+    for c in ["題材族群","供應鏈"]:
+        if c not in z.columns: z[c]=""
+    z["代號"]=z["代號"].map(_stock_code)
+    return z[["代號","題材族群","供應鏈"]].drop_duplicates("代號",keep="last")
+
+
+def enrich_strong_groups(strong_df):
+    if strong_df is None or strong_df.empty:
+        return pd.DataFrame(), {"分類覆蓋率":0.0,"產業來源":"無資料","題材表":False}
+    x=strong_df.copy()
+    if "代號" not in x.columns: return x,{"分類覆蓋率":0.0,"產業來源":"缺代號","題材表":False}
+    x["代號"]=x["代號"].map(_stock_code)
+
+    # 若輸入本身已帶產業欄，先使用；再用官方對照補空值。
+    existing=next((c for c in ["官方產業別","產業別","產業","類股"] if c in x.columns),None)
+    if existing and existing!="官方產業別": x["官方產業別"]=x[existing]
+    ind=official_industry_map()
+    if not ind.empty:
+        x=x.merge(ind,on="代號",how="left",suffixes=("","_map"))
+        if "官方產業別_map" in x.columns:
+            if "官方產業別" not in x.columns: x["官方產業別"]=x["官方產業別_map"]
+            else: x["官方產業別"]=x["官方產業別"].where(x["官方產業別"].fillna("").astype(str).str.strip()!="",x["官方產業別_map"])
+            x=x.drop(columns=[c for c in ["官方產業別_map"] if c in x.columns])
+        if "產業來源" not in x.columns and "產業來源_map" in x.columns: x["產業來源"]=x["產業來源_map"]
+    if "官方產業別" not in x.columns: x["官方產業別"]="未分類"
+    x["官方產業別"]=x["官方產業別"].fillna("未分類").astype(str).replace({"":"未分類","nan":"未分類"}).map(_industry_zh)
+
+    themes=_theme_map()
+    if not themes.empty: x=x.merge(themes,on="代號",how="left")
+    if "題材族群" not in x.columns: x["題材族群"]=""
+    if "供應鏈" not in x.columns: x["供應鏈"]=""
+
+    classified=(x["官方產業別"]!="未分類").sum()
+    sources=x.get("產業來源",pd.Series(dtype=str)).dropna().astype(str).unique().tolist()
+    meta={
+        "分類覆蓋率":float(classified/len(x)*100) if len(x) else 0.0,
+        "產業來源":"＋".join(sources[:3]) if sources else ("輸入檔內建" if existing else "官方來源暫不可用"),
+        "題材表":bool(not themes.empty),
+    }
+    return x,meta
+
+
+def _split_group_values(v):
+    s=text(v,"").strip()
+    if not s: return []
+    return [q.strip() for q in re.split(r"[｜|/、;,，]+",s) if q.strip()]
+
+
+def group_strength_summary(enriched, group_col="官方產業別"):
+    cols=["排名",group_col,"狀態","族群強度","強勢股家數","占強勢股%","平均RS","RS90以上","成交金額占比%","代表強股"]
+    if enriched is None or enriched.empty or group_col not in enriched.columns:
+        return pd.DataFrame(columns=cols)
+    x=enriched.copy()
+    if group_col=="題材族群":
+        x["_group_list"]=x[group_col].map(_split_group_values)
+        x=x.explode("_group_list")
+        x=x[x["_group_list"].fillna("").astype(str).str.strip()!=""]
+        x[group_col]=x["_group_list"]
+    else:
+        x=x[x[group_col].fillna("").astype(str).str.strip()!=""]
+    if x.empty: return pd.DataFrame(columns=cols)
+
+    x["RS_num"]=pd.to_numeric(x.get("RS",pd.Series(index=x.index,dtype=float)),errors="coerce")
+    x["成交_num"]=pd.to_numeric(x.get("成交金額",pd.Series(index=x.index,dtype=float)),errors="coerce").fillna(0)
+    total_codes=max(1,enriched["代號"].nunique() if "代號" in enriched.columns else len(enriched))
+    total_amt=max(0.0,float(pd.to_numeric(enriched.get("成交金額",pd.Series(dtype=float)),errors="coerce").fillna(0).sum()))
+
+    rows=[]
+    for g,d in x.groupby(group_col,dropna=False):
+        g=text(g,"未分類")
+        if g in {"未分類","nan","—",""}: continue
+        d=d.sort_values("RS_num",ascending=False,na_position="last")
+        n=int(d["代號"].nunique()) if "代號" in d.columns else len(d)
+        share=n/total_codes*100
+        avg=float(d["RS_num"].mean()) if d["RS_num"].notna().any() else 0.0
+        rs90=int((d["RS_num"]>=90).sum())
+        rs90_ratio=rs90/max(1,n)*100
+        amt=float(d["成交_num"].sum())
+        amt_share=amt/total_amt*100 if total_amt>0 else 0.0
+        concentration=min(100.0,share*4.0)  # 25% 的強勢股集中於單一族群即封頂
+        liquidity=min(100.0,amt_share*4.0)
+        score=max(0.0,min(100.0,avg*0.35+concentration*0.30+rs90_ratio*0.20+liquidity*0.15))
+        if n>=3 and score>=80: status="🔥 主流集中"
+        elif n>=3 and score>=68: status="🟢 強勢族群"
+        elif n>=2 and avg>=85: status="🟡 聚集觀察"
+        else: status="⚪ 零散強勢"
+        reps="、".join((d.get("名稱",pd.Series(index=d.index,dtype=str)).fillna("").astype(str)+"("+d.get("代號",pd.Series(index=d.index,dtype=str)).astype(str)+")").head(5).tolist())
+        rows.append({group_col:g,"狀態":status,"族群強度":round(score,1),"強勢股家數":n,"占強勢股%":round(share,1),"平均RS":round(avg,1),"RS90以上":rs90,"成交金額占比%":round(amt_share,1),"代表強股":reps})
+    if not rows: return pd.DataFrame(columns=cols)
+    out=pd.DataFrame(rows).sort_values(["族群強度","強勢股家數","平均RS"],ascending=[False,False,False]).reset_index(drop=True)
+    out.insert(0,"排名",range(1,len(out)+1))
+    return out
+
+
+def sector_radar(strong_df):
+    enriched,meta=enrich_strong_groups(strong_df)
+    industry=group_strength_summary(enriched,"官方產業別")
+    themes=group_strength_summary(enriched,"題材族群") if meta.get("題材表") else pd.DataFrame()
+    if not industry.empty:
+        top=industry.iloc[0]
+        meta.update({"第一主流":text(top.get("官方產業別")),"第一主流分數":_num(top.get("族群強度"),0) or 0,"第一主流占比":_num(top.get("占強勢股%"),0) or 0})
+    else:
+        meta.update({"第一主流":"尚無可用分類","第一主流分數":0.0,"第一主流占比":0.0})
+    return {"個股":enriched,"產業":industry,"題材":themes,"meta":meta}
+
+
+def _trend_arrow(v, flat=0.0):
+    if v is None: return "—"
+    if v>flat: return "↑"
+    if v<-flat: return "↓"
+    return "→"
+
+
+def market_practical_signal(daily_df, row, market_lr):
+    """把大盤多個分數的相對方向轉成可操作狀態；屬規則引擎，不宣稱是勝率。"""
+    if daily_df is None or daily_df.empty:
+        return {"標籤":"⚪ 資料不足","動作":"等待資料","原因":"沒有可比較的盤後資料","下一觸發":"資料更新後再判讀","指標表":pd.DataFrame()}
+    cur=row
+    prev=daily_df.iloc[-2] if len(daily_df)>=2 else cur
+    prev2=daily_df.iloc[-3] if len(daily_df)>=3 else prev
+    def val(r,names,default=None): return _num(first_value(r,names),default)
+    w=val(cur,["Wade內部強度分數"]); pw=val(prev,["Wade內部強度分數"]); p2w=val(prev2,["Wade內部強度分數"])
+    adv=val(cur,["上漲比例%"]); padv=val(prev,["上漲比例%"])
+    sc=val(cur,["強勢股檔數"]); psc=val(prev,["強勢股檔數"])
+    nh=val(cur,["52週新高家數"]); pnh=val(prev,["52週新高家數"])
+    nl=val(cur,["52週新低家數"]); pnl=val(prev,["52週新低家數"])
+    lead=val(cur,["主流延續分數"]); plead=val(prev,["主流延續分數"])
+    direction=text(first_value(cur,["強勢股方向"]),"持平")
+    dirmap={"明顯減少":-2,"減少":-1,"持平":0,"增加":1,"明顯增加":2}
+    dcode=dirmap.get(direction,0)
+    dw=(w-pw) if w is not None and pw is not None else 0.0
+    prev_dw=(pw-p2w) if pw is not None and p2w is not None else 0.0
+    dadv=(adv-padv) if adv is not None and padv is not None else 0.0
+    dsc=(sc-psc) if sc is not None and psc is not None else 0.0
+    dnh=(nh-pnh) if nh is not None and pnh is not None else 0.0
+    dnl=(nl-pnl) if nl is not None and pnl is not None else 0.0
+    dlead=(lead-plead) if lead is not None and plead is not None else 0.0
+
+    w_up=dw>=1.0; w_down=dw<=-1.0
+    adv_up=dadv>=2.0; adv_down=dadv<=-2.0
+    strong_up=dsc>0; strong_down=dsc<0
+    nh_up=dnh>0; nh_down=dnh<0; nl_up=dnl>0
+    rs_up=dcode>=1; rs_flat=dcode==0; rs_down=dcode<=-1
+    turn_up=w_up and prev_dw<0
+    bull=sum([w_up,rs_up,adv_up,strong_up,nh_up])
+    bear=sum([w_down,rs_down,adv_down,strong_down,nl_up])
+    right=_num((market_lr or {}).get("右側分數"),0) or 0
+
+    if bear>=4 and (w is None or w<50 or rs_down):
+        label="🔴 全面轉弱｜防守/出場區"
+        action="降低總曝險；停止新倉，弱股優先退出，僅保留仍符合強勢結構者"
+        nxt="等待 Wade 止跌、RS不再減少、上漲比例回升後再解除防守"
+    elif w_down and bear>=3:
+        label="🟠 內部退潮｜減碼"
+        action="停止追價與加碼；分批汰弱留強，降低曝險"
+        nxt="Wade日變化轉正＋RS持平/增加＋上漲比例改善，才升回觀察/進場"
+    elif turn_up and not rs_down and (adv_up or strong_up or nh_up):
+        label="🟢 洗盤轉強｜進場窗口"
+        action="可開始建立/增加第一段部位；優先挑高RS且鴨嘴/培育中心共振股"
+        nxt="若右側分數升至65以上且 Wade/RS/廣度續強，可升級為加碼"
+    elif bull>=4 and (w is None or w>=50) and right>=55:
+        label="🟢 全面轉強｜持有/加碼"
+        action="順勢持有並對最強族群加碼；過熱股仍不追高"
+        nxt="若 Wade與RS同時轉弱或強勢股家數開始收縮，降級為觀察"
+    elif w_down and (rs_flat or rs_up):
+        label="🟡 強股抗跌｜等待Wade止跌"
+        action="先不追價；把高RS強股與強勢族群列入優先觀察"
+        nxt="Wade日變化轉正＋上漲比例改善＋RS維持不弱，升級為洗盤轉強"
+    elif not w_down and rs_down and (w_up or adv_up or strong_up):
+        label="🟠 主流輪動｜換股不一定退場"
+        action="檢查舊主流是否退潮；不急著全面空手，改找新RS領先族群"
+        nxt="新族群強勢股家數持續增加且主流延續回升，確認輪動成功"
+    elif (w is not None and w<=50) and rs_up and not w_down:
+        label="🟡 領先轉強｜早期觀察"
+        action="先建立候選名單，小部位需等市場廣度確認"
+        nxt="Wade突破短期下降趨勢且上漲比例回到50%以上，再升級進場"
+    else:
+        label="⚪ 中性整理｜等待"
+        action="維持原部位與風控，不因單一分數一天變化做大幅調整"
+        nxt="等待 Wade、RS、上漲比例至少兩至三項同向後再升降級"
+
+    reasons=[
+        f"Wade {_trend_arrow(dw,0.9)} {dw:+.1f}",
+        f"RS強勢股方向 {direction}",
+        f"強勢股家數 {_trend_arrow(dsc,0)} {dsc:+.0f}",
+        f"上漲比例 {_trend_arrow(dadv,1.9)} {dadv:+.1f}pp",
+    ]
+    if nh is not None and pnh is not None: reasons.append(f"新高家數 {_trend_arrow(dnh,0)} {dnh:+.0f}")
+    if nl is not None and pnl is not None: reasons.append(f"新低家數 {_trend_arrow(dnl,0)} {dnl:+.0f}")
+    if lead is not None and plead is not None: reasons.append(f"主流延續 {_trend_arrow(dlead,0.9)} {dlead:+.1f}")
+
+    rows=[]
+    def add_row(name,a,b,unit="",flat=0.0):
+        if a is None or b is None: return
+        d=a-b
+        rows.append({"指標":name,"今日":round(a,2),"前日":round(b,2),"變化":f"{_trend_arrow(d,flat)} {d:+.2f}{unit}"})
+    add_row("Wade",w,pw,"",0.9)
+    add_row("RS強勢股家數",sc,psc," 檔",0)
+    add_row("上漲比例",adv,padv," pp",1.9)
+    add_row("52週新高",nh,pnh," 檔",0)
+    add_row("52週新低",nl,pnl," 檔",0)
+    add_row("主流延續分數",lead,plead,"",0.9)
+    table=pd.DataFrame(rows)
+    return {"標籤":label,"動作":action,"原因":"｜".join(reasons),"下一觸發":nxt,"指標表":table,"多頭確認數":bull,"空頭確認數":bear}
+
+
 rs_source=_xlsx_source(DEFAULT_RS,"rs_uploaded_bytes")
 duck_source=_xlsx_source(DEFAULT_DUCK,"duck_uploaded_bytes")
 try:
@@ -2311,6 +2675,8 @@ operation_action=text(first_value(rs_latest,["操作建議"]), infer_action(stag
 if risk_signal_level(left_alert)=="watch": operation_action="停止擴大曝險／風險觀察"
 elif risk_signal_level(left_alert)=="reduce": operation_action="分批減碼／汰弱留強"
 market_lr=market_lr_assessment(rs_latest)
+practical_signal=market_practical_signal(daily,rs_latest,market_lr)
+sector_info=sector_radar(strong)
 quality=market_confidence(rs_latest,market_lr)
 wade_day_change=metric_day_change(daily,"Wade內部強度分數")
 wade_timing_text=wade_timing_summary(wade_score,wade_day_change,wade_change5)
@@ -3260,6 +3626,7 @@ else:
         ("市場在哪裡", f"{market_signal(stage)}｜{stage}", f"{water}；{stage_plain(stage)}"),
         ("總曝險參考", exposure_plan["顯示"], f"{exposure_plan['層級']}｜{exposure_plan['說明']}"),
         ("現在怎麼做", operation_level, market_lr["左右側建議"]),
+        ("實戰組合訊號", practical_signal["標籤"], practical_signal["動作"]),
         ("早期轉強", early_signal_phase, signal_current_text(early_signal_stats)),
         ("風險／減碼", left_signal_phase, signal_current_text(left_reduce_stats if risk_signal_level(left_alert)=="reduce" else left_signal_stats)),
         ("下一個升級／降級條件", short_trigger, next_trigger),
@@ -3295,10 +3662,16 @@ with tabs[0]:
         ("市場狀態",f"{market_signal(stage)}｜{stage}",stage_plain(stage)),
         ("總曝險參考",exposure_plan["顯示"],f"{exposure_plan['層級']}｜{exposure_plan['說明']}"),
         ("操作",operation_level,market_lr["左右側建議"]),
+        ("實戰組合",practical_signal["標籤"],practical_signal["動作"]),
         ("訊號天數",f"轉強：{early_signal_phase}",f"風險：{left_signal_phase}"),
         ("Wade節奏",wade_timing_text,f"目前 {safe_num(wade_score,1)}｜今日 {signed_num(wade_day_change)}｜5日 {signed_num(wade_change5)}"),
         ("下一個確認點",short_trigger,next_trigger),
     ])
+    st.markdown(
+        f'<div class="focus-box"><b>⚡ 指標組合實戰判讀：</b> {html.escape(practical_signal["標籤"])}<br>'
+        f'<b>原因：</b> {html.escape(practical_signal["原因"])}<br>'
+        f'<b>下一個觸發：</b> {html.escape(practical_signal["下一觸發"])}</div>',unsafe_allow_html=True
+    )
     c1,c2=st.columns([1.12,1])
     with c1:
         st.subheader("RS 市場溫度")
@@ -3548,6 +3921,31 @@ with tabs[2]:
     days=st.slider("歷史圖顯示交易日",30,min(500,len(daily)),min(180,len(daily)),10)
     ch=breadth_chart(daily,days)
     if ch is not None: st.altair_chart(ch,use_container_width=True)
+
+    st.write("### 🔥 強勢族群雷達｜今天資金集中在哪裡？")
+    sec_meta=sector_info.get("meta",{})
+    sec_ind=sector_info.get("產業",pd.DataFrame())
+    sec_theme=sector_info.get("題材",pd.DataFrame())
+    cards([
+        ("官方分類覆蓋",safe_num(sec_meta.get("分類覆蓋率"),1,"%"),sec_meta.get("產業來源","—")),
+        ("第一主流",sec_meta.get("第一主流","—"),f"族群強度 {safe_num(sec_meta.get('第一主流分數'),1)}"),
+        ("第一主流集中",safe_num(sec_meta.get("第一主流占比"),1,"%"),"占今日RS強勢股"),
+        ("題材/供應鏈層","已啟用" if sec_meta.get("題材表") else "待建立對照表","不硬猜概念股"),
+    ])
+    if not sec_ind.empty:
+        st.dataframe(sec_ind.head(12),hide_index=True,use_container_width=True,height=min(520,85+35*min(12,len(sec_ind))))
+        top3=sec_ind.head(3)
+        top_text="；".join([f"{r['排名']}. {r['官方產業別']} {r['狀態']}（{r['強勢股家數']}檔／強度{r['族群強度']}）" for _,r in top3.iterrows()])
+        st.info(f"**今日產業主軸：** {top_text}")
+    else:
+        st.warning("目前官方產業分類來源暫時不可用；強勢股仍正常顯示，但族群排名不會用名稱硬猜。")
+    if sec_meta.get("題材表") and sec_theme is not None and not sec_theme.empty:
+        with st.expander("🎯 交易題材／供應鏈族群",expanded=True):
+            st.dataframe(sec_theme.head(15),hide_index=True,use_container_width=True,height=500)
+    else:
+        st.caption("題材層採可維護的 stock_theme_map.csv；未建立前只顯示官方產業別。這可避免把同產業公司自動誤判成 AI、機器人、CPO 等題材。")
+    st.caption("族群強度＝35%平均RS＋30%強勢股集中度＋20%RS90以上比例＋15%成交金額集中度；只是當日截面排序，不是上漲機率。生命週期要累積每日族群快照後再啟用。")
+
     st.write("**最新 RS 強勢股名單**")
     rs_q=st.text_input("搜尋代號／名稱",key="rs_search")
     rs_show=filter_stock_table(strong.copy(),rs_q)
@@ -3574,6 +3972,17 @@ with tabs[3]:
         ("上市／上櫃等權",f"{safe_num(twse_mean_return,2,'%')}／{safe_num(tpex_mean_return,2,'%')}",f"櫃買相對 {safe_num(tpex_rel,1)}"),
         ("主流延續率",safe_num(leader_retention,1,"%"),f"新領頭股 {safe_num(new_leaders,0)}／延續分數 {safe_num(leadership_score,1)}"),
     ])
+
+    st.write("### ⚡ 指標組合實戰判讀｜進場、加碼、輪動、減碼")
+    decision_cards([
+        ("組合狀態",practical_signal["標籤"],practical_signal["原因"]),
+        ("現在動作",practical_signal["動作"],f"多頭確認 {practical_signal.get('多頭確認數',0)}／5｜空頭確認 {practical_signal.get('空頭確認數',0)}／5"),
+        ("下一個觸發",practical_signal["下一觸發"],"避免只因單一分數一天變化就進出"),
+    ])
+    if practical_signal.get("指標表") is not None and not practical_signal["指標表"].empty:
+        with st.expander("查看今日各指標相對前日的方向",expanded=False):
+            st.dataframe(practical_signal["指標表"],hide_index=True,use_container_width=True)
+    st.caption("這層專門抓同步與背離，例如『Wade下降但RS持平/上升＝強股抗跌』；真正進場要等 Wade 止跌轉升並由廣度確認。")
 
     st.write("### 🎯 今日決策三層｜狀態 → 證據 → 行動")
     evs=evidence_ladder.get("stats",{}) if evidence_ladder else {}
