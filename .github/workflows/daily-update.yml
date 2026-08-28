@@ -100,30 +100,24 @@ jobs:
 
       - name: Verify full-market fundamentals
         run: |
-          python -u automation/duckbill/fundamental_full_market_fix.py \
-            --date "${{ steps.target.outputs.date }}" \
-            --workbook duck_latest.xlsx
+          python -u automation/duckbill/fundamental_full_market_fix.py             --date "${{ steps.target.outputs.date }}"             --workbook duck_latest.xlsx
 
-      # v2.2：用底層驗收＋SQLite官方歷史季報重建三率顯示，
-      # 避免只有snapshot缺失就被誤列為資料缺漏。
       - name: Finalize three-rate display from verified history
         run: |
-          python -u automation/duckbill/fundamental_three_rate_finalizer.py \
-            --date "${{ steps.target.outputs.date }}" \
-            --workbook duck_latest.xlsx
+          python -u automation/duckbill/fundamental_three_rate_finalizer.py             --date "${{ steps.target.outputs.date }}"             --workbook duck_latest.xlsx
 
       - name: Build intraday baseline
         run: python -u automation/build_intraday_baseline.py
+
+      - name: Build strong-theme daily snapshot
+        run: python -u automation/build_group_snapshot.py
 
       - name: Commit latest results to dashboard
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rs_latest.xlsx duck_latest.xlsx update_status.json \
-                  intraday_baseline.pkl.gz intraday_baseline_status.json \
-                  fundamental_full_market_status.json \
-                  fundamental_three_rate_finalizer_status.json
+          git add rs_latest.xlsx duck_latest.xlsx update_status.json                   intraday_baseline.pkl.gz intraday_baseline_status.json                   fundamental_full_market_status.json                   fundamental_three_rate_finalizer_status.json                   group_history.csv
           if git diff --cached --quiet; then
             echo "No dashboard file changes."
           else
