@@ -1,27 +1,27 @@
 {
   "version": "three-rate-finalizer-v2.2",
-  "target_date": "2026-08-27",
+  "target_date": "2026-08-28",
   "counts": {
-    "stocks": 1948,
-    "three_rate_yes": 679,
-    "three_rate_no": 1223,
-    "three_rate_na": 35,
-    "three_rate_listing_insufficient": 0,
-    "three_rate_prior_history_short": 3,
-    "three_rate_data_missing": 8,
+    "stocks": 1951,
+    "three_rate_yes": 290,
+    "three_rate_no": 291,
+    "three_rate_na": 37,
+    "three_rate_listing_insufficient": 15,
+    "three_rate_prior_history_short": 1230,
+    "three_rate_data_missing": 88,
     "three_rate_unknown": 0
   },
   "quanta_2382": {
     "stock_id": "2382",
     "name": "廣達",
-    "three_rate_status": "三率三升",
-    "three_rate_period": "2026Q2 vs 2026Q1",
-    "gross_current_pct": 5.024041978794078,
-    "gross_prev_pct": 4.78200990457422,
-    "operating_current_pct": 3.303521875426807,
-    "operating_prev_pct": 2.8452067402027748,
-    "net_current_pct": 2.777123711824823,
-    "net_prev_pct": 2.6329162925697727
+    "three_rate_status": "比較期歷史不足",
+    "three_rate_period": null,
+    "gross_current_pct": null,
+    "gross_prev_pct": null,
+    "operating_current_pct": null,
+    "operating_prev_pct": null,
+    "net_current_pct": null,
+    "net_prev_pct": null
   },
   "note": "以底層驗收＋SQLite官方歷史季報重建Excel三率顯示，修正snapshot-only造成的假缺漏。"
 }
