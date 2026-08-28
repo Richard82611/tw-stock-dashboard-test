@@ -24,9 +24,10 @@ STATUS_FILE = APP_DIR / "update_status.json"
 INTRADAY_BASELINE_FILE = APP_DIR / "intraday_baseline.pkl.gz"
 THEME_MAP_FILE = APP_DIR / "stock_theme_map.csv"
 INDUSTRY_MAP_FILE = APP_DIR / "stock_industry_map.csv"
+GROUP_HISTORY_FILE = APP_DIR / "group_history.csv"
 ACTIONS_URL = "https://github.com/jan770610-dot/tw-stock-dashboard-test/actions/workflows/daily-update.yml"
 
-st.set_page_config(page_title="台股分析中心 v3.6.2", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="台股分析中心 v3.7", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -2508,9 +2509,13 @@ def enrich_strong_groups(strong_df):
     if "供應鏈" not in x.columns: x["供應鏈"]=""
 
     classified=(x["官方產業別"]!="未分類").sum()
+    theme_mapped=(x["題材族群"].fillna("").astype(str).str.strip()!="").sum()
+    supply_mapped=(x["供應鏈"].fillna("").astype(str).str.strip()!="").sum()
     sources=x.get("產業來源",pd.Series(dtype=str)).dropna().astype(str).unique().tolist()
     meta={
         "分類覆蓋率":float(classified/len(x)*100) if len(x) else 0.0,
+        "題材覆蓋率":float(theme_mapped/len(x)*100) if len(x) else 0.0,
+        "供應鏈覆蓋率":float(supply_mapped/len(x)*100) if len(x) else 0.0,
         "產業來源":"＋".join(sources[:3]) if sources else ("輸入檔內建" if existing else "官方來源暫不可用"),
         "題材表":bool(not themes.empty),
     }
@@ -2528,7 +2533,7 @@ def group_strength_summary(enriched, group_col="官方產業別"):
     if enriched is None or enriched.empty or group_col not in enriched.columns:
         return pd.DataFrame(columns=cols)
     x=enriched.copy()
-    if group_col=="題材族群":
+    if group_col in {"題材族群","供應鏈"}:
         x["_group_list"]=x[group_col].map(_split_group_values)
         x=x.explode("_group_list")
         x=x[x["_group_list"].fillna("").astype(str).str.strip()!=""]
@@ -2569,16 +2574,141 @@ def group_strength_summary(enriched, group_col="官方產業別"):
     return out
 
 
-def sector_radar(strong_df):
+def _load_group_history():
+    cols=["日期","類型","族群","族群強度","強勢股家數","占強勢股%","平均RS","RS90以上","成交金額占比%"]
+    if not GROUP_HISTORY_FILE.exists():
+        return pd.DataFrame(columns=cols)
+    try:
+        h=pd.read_csv(GROUP_HISTORY_FILE,encoding="utf-8-sig")
+    except Exception:
+        try: h=pd.read_csv(GROUP_HISTORY_FILE)
+        except Exception: return pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in h.columns: h[c]=pd.NA
+    h["日期"]=pd.to_datetime(h["日期"],errors="coerce")
+    for c in ["族群強度","強勢股家數","占強勢股%","平均RS","RS90以上","成交金額占比%"]:
+        h[c]=pd.to_numeric(h[c],errors="coerce")
+    return h[cols].dropna(subset=["日期"])
+
+
+def _lifecycle_label(score, d1, d5, n5, streak):
+    score=_num(score,0) or 0
+    d1=_num(d1,0) or 0
+    d5=_num(d5,0) or 0
+    n5=_num(n5,0) or 0
+    streak=int(_num(streak,0) or 0)
+    if streak<=1 and score>=55 and d1>=5:
+        return "🌱 萌芽"
+    if score>=68 and d5>=8 and n5>=1:
+        return "🟢 發動"
+    if score>=78 and d5>=3 and streak>=3:
+        return "🔥 主升"
+    if score>=75 and d5<=-6:
+        return "🟡 高檔鈍化"
+    if d5<=-10 and n5<=-2:
+        return "🟠 退潮"
+    if score<60 and d5<0:
+        return "🟠 退潮"
+    if score>=68 and abs(d5)<6:
+        return "🟢 強勢延續"
+    if d5>=5:
+        return "↗️ 升溫"
+    if d5<=-5:
+        return "↘️ 降溫"
+    return "➡️ 整理"
+
+
+def _decorate_lifecycle(summary, group_type, history, current_date=None):
+    if summary is None or summary.empty:
+        return summary
+    out=summary.copy()
+    group_col=group_type
+    if history is None or history.empty:
+        out["生命週期"]="🆕 建立基準"
+        out["1日強度變化"]=pd.NA
+        out["5日強度變化"]=pd.NA
+        out["5日家數變化"]=pd.NA
+        out["連續強勢日"]=1
+        return out
+    hh=history[history["類型"]==group_type].copy()
+    if current_date not in (None,"","—"):
+        try:
+            cur_d=pd.to_datetime(current_date,errors="coerce")
+            if pd.notna(cur_d):
+                hh=hh[hh["日期"]<cur_d]
+        except Exception:
+            pass
+    if hh.empty:
+        out["生命週期"]="🆕 建立基準"
+        out["1日強度變化"]=pd.NA
+        out["5日強度變化"]=pd.NA
+        out["5日家數變化"]=pd.NA
+        out["連續強勢日"]=1
+        return out
+
+    lifes=[]; d1s=[]; d5s=[]; n5s=[]; streaks=[]
+    for _,r in out.iterrows():
+        g=text(r.get(group_col),"")
+        gh=hh[hh["族群"].astype(str)==g].sort_values("日期")
+        scores=gh["族群強度"].dropna().tolist()
+        counts=gh["強勢股家數"].dropna().tolist()
+        cur=_num(r.get("族群強度"),0) or 0
+        cur_n=_num(r.get("強勢股家數"),0) or 0
+        d1=cur-scores[-1] if len(scores)>=1 else None
+        d5=cur-scores[-5] if len(scores)>=5 else (cur-scores[0] if len(scores)>=1 else None)
+        n5=cur_n-counts[-5] if len(counts)>=5 else (cur_n-counts[0] if len(counts)>=1 else None)
+        streak=1
+        # 連續「族群強度>=68」日數：包含今天。
+        if cur>=68:
+            for v in reversed(scores):
+                if _num(v,0) is not None and float(v)>=68: streak+=1
+                else: break
+        lifes.append(_lifecycle_label(cur,d1,d5,n5,streak))
+        d1s.append(round(d1,1) if d1 is not None else None)
+        d5s.append(round(d5,1) if d5 is not None else None)
+        n5s.append(round(n5,0) if n5 is not None else None)
+        streaks.append(streak)
+    out["生命週期"]=lifes
+    out["1日強度變化"]=d1s
+    out["5日強度變化"]=d5s
+    out["5日家數變化"]=n5s
+    out["連續強勢日"]=streaks
+    cols=list(out.columns)
+    # 把生命週期移到狀態後面，方便一眼閱讀。
+    if "生命週期" in cols:
+        cols.remove("生命週期")
+        insert_at=cols.index("狀態")+1 if "狀態" in cols else 2
+        cols.insert(insert_at,"生命週期")
+        out=out[cols]
+    return out
+
+
+def sector_radar(strong_df, current_date=None):
     enriched,meta=enrich_strong_groups(strong_df)
     industry=group_strength_summary(enriched,"官方產業別")
     themes=group_strength_summary(enriched,"題材族群") if meta.get("題材表") else pd.DataFrame()
+    supply=group_strength_summary(enriched,"供應鏈") if meta.get("題材表") else pd.DataFrame()
+    hist=_load_group_history()
+    industry=_decorate_lifecycle(industry,"官方產業別",hist,current_date)
+    themes=_decorate_lifecycle(themes,"題材族群",hist,current_date)
+    supply=_decorate_lifecycle(supply,"供應鏈",hist,current_date)
+
+    if not themes.empty:
+        top_t=themes.iloc[0]
+        meta.update({
+            "第一題材":text(top_t.get("題材族群")),
+            "第一題材分數":_num(top_t.get("族群強度"),0) or 0,
+            "第一題材生命週期":text(top_t.get("生命週期"),"—"),
+        })
+    else:
+        meta.update({"第一題材":"尚無題材資料","第一題材分數":0.0,"第一題材生命週期":"—"})
+
     if not industry.empty:
         top=industry.iloc[0]
         meta.update({"第一主流":text(top.get("官方產業別")),"第一主流分數":_num(top.get("族群強度"),0) or 0,"第一主流占比":_num(top.get("占強勢股%"),0) or 0})
     else:
         meta.update({"第一主流":"尚無可用分類","第一主流分數":0.0,"第一主流占比":0.0})
-    return {"個股":enriched,"產業":industry,"題材":themes,"meta":meta}
+    return {"個股":enriched,"產業":industry,"題材":themes,"供應鏈":supply,"meta":meta}
 
 
 def _trend_arrow(v, flat=0.0):
@@ -2734,7 +2864,7 @@ if risk_signal_level(left_alert)=="watch": operation_action="停止擴大曝險�
 elif risk_signal_level(left_alert)=="reduce": operation_action="分批減碼／汰弱留強"
 market_lr=market_lr_assessment(rs_latest)
 practical_signal=market_practical_signal(daily,rs_latest,market_lr)
-sector_info=sector_radar(strong)
+sector_info=sector_radar(strong,rs_date)
 quality=market_confidence(rs_latest,market_lr)
 wade_day_change=metric_day_change(daily,"Wade內部強度分數")
 wade_timing_text=wade_timing_summary(wade_score,wade_day_change,wade_change5)
@@ -3980,25 +4110,35 @@ with tabs[2]:
     sec_meta=sector_info.get("meta",{})
     sec_ind=sector_info.get("產業",pd.DataFrame())
     sec_theme=sector_info.get("題材",pd.DataFrame())
+    sec_supply=sector_info.get("供應鏈",pd.DataFrame())
     cards([
         ("官方分類覆蓋",safe_num(sec_meta.get("分類覆蓋率"),1,"%"),sec_meta.get("產業來源","—")),
-        ("第一主流",sec_meta.get("第一主流","—"),f"族群強度 {safe_num(sec_meta.get('第一主流分數'),1)}"),
-        ("第一主流集中",safe_num(sec_meta.get("第一主流占比"),1,"%"),"占今日RS強勢股"),
-        ("題材/供應鏈層","已啟用" if sec_meta.get("題材表") else "待建立對照表","不硬猜概念股"),
+        ("交易題材覆蓋",safe_num(sec_meta.get("題材覆蓋率"),1,"%"),"今日RS強勢股已映射"),
+        ("今日第一題材",sec_meta.get("第一題材","—"),f"{sec_meta.get('第一題材生命週期','—')}｜強度 {safe_num(sec_meta.get('第一題材分數'),1)}"),
+        ("第一官方產業",sec_meta.get("第一主流","—"),f"占強勢股 {safe_num(sec_meta.get('第一主流占比'),1,'%')}"),
     ])
-    if not sec_ind.empty:
-        st.dataframe(sec_ind.head(12),hide_index=True,use_container_width=True,height=min(520,85+35*min(12,len(sec_ind))))
-        top3=sec_ind.head(3)
-        top_text="；".join([f"{r['排名']}. {r['官方產業別']} {r['狀態']}（{r['強勢股家數']}檔／強度{r['族群強度']}）" for _,r in top3.iterrows()])
-        st.info(f"**今日產業主軸：** {top_text}")
-    else:
-        st.warning("目前尚未取得產業分類；系統已嘗試本機對照表與官方ISIN快取。強勢股仍正常顯示，稍後重新整理即可再試，不會影響其他功能。")
+
     if sec_meta.get("題材表") and sec_theme is not None and not sec_theme.empty:
-        with st.expander("🎯 交易題材／供應鏈族群",expanded=True):
-            st.dataframe(sec_theme.head(15),hide_index=True,use_container_width=True,height=500)
+        st.write("#### 🎯 交易題材排名｜比官方產業更接近實戰")
+        st.dataframe(sec_theme.head(18),hide_index=True,use_container_width=True,height=min(620,90+35*min(18,len(sec_theme))))
+        top5=sec_theme.head(5)
+        theme_text="；".join([f"{r['排名']}. {r['題材族群']} {r.get('生命週期','—')}（{r['強勢股家數']}檔／強度{r['族群強度']}）" for _,r in top5.iterrows()])
+        st.success(f"**今日交易主軸：** {theme_text}")
+        st.caption("生命週期：🌱萌芽 → 🟢發動 → 🔥主升 → 🟡高檔鈍化 → 🟠退潮。前幾天歷史不足時會先顯示「🆕建立基準」。")
     else:
-        st.caption("題材層採可維護的 stock_theme_map.csv；未建立前只顯示官方產業別。這可避免把同產業公司自動誤判成 AI、機器人、CPO 等題材。")
-    st.caption("族群強度＝35%平均RS＋30%強勢股集中度＋20%RS90以上比例＋15%成交金額集中度；只是當日截面排序，不是上漲機率。生命週期要累積每日族群快照後再啟用。")
+        st.warning("題材對照表尚未建立；請確認 stock_theme_map.csv 與 app.py 位於同一層。")
+
+    if sec_supply is not None and not sec_supply.empty:
+        with st.expander("🔗 供應鏈細項｜資金擴散到哪個環節？",expanded=False):
+            st.dataframe(sec_supply.head(25),hide_index=True,use_container_width=True,height=560)
+
+    with st.expander("🏭 官方產業別｜較穩定的基礎分類",expanded=False):
+        if not sec_ind.empty:
+            st.dataframe(sec_ind.head(20),hide_index=True,use_container_width=True,height=560)
+        else:
+            st.warning("目前尚未取得產業分類；強勢股與題材層仍可獨立運作。")
+
+    st.caption("族群強度＝35%平均RS＋30%強勢股集中度＋20%RS90以上比例＋15%成交金額集中度；是當日截面排序，不是上漲機率。生命週期則比較每日快照的強度與家數變化。")
 
     days=st.slider("歷史圖顯示交易日",30,min(500,len(daily)),min(180,len(daily)),10)
     ch=breadth_chart(daily,days)
@@ -4101,7 +4241,7 @@ with tabs[3]:
         st.caption(f"🧪 {market_nav.get('version')}。這是條件式歷史參考，不是機率預言；導航可信度低時應回到市場狀態、Wade、右側與個股風控本身。")
     else:
         st.info(f"市場導航暫未啟用：{market_nav.get('reason','歷史資料不足')}")
-    st.caption("🏷️ 族群擴散／Wade『觀察類股』雷達暫不硬做：目前 repo 沒有可回溯的正式產業／概念族群歷史快照，因此不以『主流延續分數』冒充觀察類股。")
+    st.caption("🏷️ 族群擴散已由「🔥 RS／強勢族群」頁籤的每日題材快照追蹤；Wade主流延續分數仍只當市場內部指標，不冒充題材分類。")
     # Wade v2：今天的解讀直接寫在畫面，不藏 tooltip，避免日後忘記。
     st.write("### 📌 今日訊號怎麼讀")
     current_notes=wade_v2_current_note(stage,direction,water,left_alert,early_signal)
@@ -4301,4 +4441,4 @@ with tabs[7]:
     with open(DEFAULT_RS,"rb") as f: d1.download_button("下載 RS 最新結果",f.read(),file_name="rs_latest.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
     with open(DEFAULT_DUCK,"rb") as f: d2.download_button("下載鴨嘴最新結果",f.read(),file_name="duck_latest.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
 
-st.divider(); st.caption(f"正式版 v3.5.5｜評分透明化 × 盤中/盤後計分一致｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
+st.divider(); st.caption(f"正式版 v3.7｜評分透明化 × 盤中/盤後計分一致｜進場 v1.0 × 獲利出場 v1.2 × 失敗風控 v1.0 × 個股決策中心｜RS：{rs_date}｜鴨嘴：{duck_date}｜量化篩選與市場廣度工具，不構成投資建議。")
