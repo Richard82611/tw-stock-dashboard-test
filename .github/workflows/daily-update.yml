@@ -86,11 +86,17 @@ jobs:
           if [ ! -f automation/duckbill/stock.db ] || [ ! -d automation/rs/cache ]; then
             echo "Runtime cache miss; downloading 2026-08-14 seed from GitHub Release..."
             mkdir -p /tmp/tw-stock-seed
-            gh release download seed-v2 --pattern "bootstrap_seed_v2.zip" --dir /tmp/tw-stock-seed
-            unzip -q /tmp/tw-stock-seed/bootstrap_seed_v2.zip -d .
-            test -f automation/duckbill/stock.db
-            test -d automation/rs/cache
-            echo "Seed restored from Release."
+            if gh release download seed-v2 --pattern "bootstrap_seed_v2.zip" --dir /tmp/tw-stock-seed; then
+              unzip -q /tmp/tw-stock-seed/bootstrap_seed_v2.zip -d .
+              test -f automation/duckbill/stock.db
+              test -d automation/rs/cache
+              echo "Seed restored from Release."
+            else
+              echo "::warning::Seed release 'seed-v2' unavailable; continuing without it. History will rebuild from scratch."
+              # stock.db is created on demand by stock_duckbill.py (sqlite3.connect + CREATE TABLE IF NOT EXISTS),
+              # so it's safe to leave it absent here; only the cache directory needs to pre-exist.
+              mkdir -p automation/rs/cache
+            fi
           else
             echo "Runtime history cache restored."
           fi
