@@ -1,8 +1,8 @@
 {
   "status": "success",
-  "base_date": "2026-10-19",
-  "stocks": 1993,
+  "base_date": "2026-10-20",
+  "stocks": 1994,
   "eligible_250d": 1896,
-  "formal_rs_count": 1864,
+  "formal_rs_count": 1868,
   "output": "intraday_baseline.pkl.gz"
 }
