@@ -1,5 +1,5 @@
 {
-  "target_date": "2026-10-22",
+  "target_date": "2026-10-23",
   "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/duck_latest.xlsx",
   "all_market_stock_count": 1945,
   "counts": {
@@ -16,7 +16,7 @@
     "revenue_unknown": 10
   },
   "source": {
-    "bulk_income_added": 1,
+    "bulk_income_added": 0,
     "bulk_income_errors": [],
     "revenue_recalc": 0,
     "revenue_recalc_na": 10
