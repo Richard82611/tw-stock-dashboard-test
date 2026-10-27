@@ -1,14 +1,14 @@
 {
   "version": "three-rate-finalizer-v2.2",
-  "target_date": "2026-10-23",
+  "target_date": "2026-10-27",
   "counts": {
-    "stocks": 1945,
+    "stocks": 1957,
     "three_rate_yes": 0,
     "three_rate_no": 0,
     "three_rate_na": 39,
-    "three_rate_listing_insufficient": 1905,
+    "three_rate_listing_insufficient": 1914,
     "three_rate_prior_history_short": 0,
-    "three_rate_data_missing": 1,
+    "three_rate_data_missing": 4,
     "three_rate_unknown": 0
   },
   "quanta_2382": {
