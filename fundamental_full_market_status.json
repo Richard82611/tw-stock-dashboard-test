@@ -1,5 +1,5 @@
 {
-  "target_date": "2026-10-27",
+  "target_date": "2026-10-28",
   "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/duck_latest.xlsx",
   "all_market_stock_count": 1957,
   "counts": {
@@ -7,19 +7,17 @@
     "three_rate_yes": 0,
     "three_rate_no": 0,
     "three_rate_na": 39,
-    "three_rate_listing_insufficient": 1914,
+    "three_rate_listing_insufficient": 1917,
     "three_rate_prior_history_short": 0,
-    "three_rate_data_missing": 4,
+    "three_rate_data_missing": 1,
     "three_rate_unknown": 0,
-    "revenue_yes": 743,
-    "revenue_no": 1204,
+    "revenue_yes": 740,
+    "revenue_no": 1207,
     "revenue_unknown": 10
   },
   "source": {
-    "bulk_income_added": 1,
-    "bulk_income_errors": [
-      "TPEx-ciOA:RuntimeError:GET JSON 失敗: https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_ciA params=None | (\"Connection br"
-    ],
+    "bulk_income_added": 2,
+    "bulk_income_errors": [],
     "revenue_recalc": 0,
     "revenue_recalc_na": 10
   },
