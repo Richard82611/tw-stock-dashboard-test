@@ -39,13 +39,15 @@ def write_status(status,target,rs_date,duck_date,message,attempts):
     STATUS.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--attempts',type=int,default=3); ap.add_argument('--retry-minutes',type=int,default=8); args=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('--date'); ap.add_argument('--attempts',type=int,default=3); ap.add_argument('--retry-minutes',type=int,default=8); ap.add_argument('--force-rebuild',action='store_true',help='重建執行期歷史，即使工作簿已有目標日期'); args=ap.parse_args()
     if args.date: target=dt.datetime.strptime(args.date,'%Y-%m-%d').date()
     else: target=dt.datetime.now(ZoneInfo('Asia/Taipei')).date()
     while target.weekday()>=5: target-=dt.timedelta(days=1)
     existing_rs=excel_latest(ROOT/'rs_latest.xlsx','每日強勢股數量',0)
     existing_duck=excel_latest(ROOT/'duck_latest.xlsx','全部符合',1)
-    rs_date=existing_rs; duck_date=existing_duck; rs_out=None; duck_out=None; errors=[]
+    rs_date=None if args.force_rebuild else existing_rs
+    duck_date=None if args.force_rebuild else existing_duck
+    rs_out=None; duck_out=None; errors=[]
     used_attempts=0
     for attempt in range(1,max(1,args.attempts)+1):
         used_attempts=attempt; print(f'=== Attempt {attempt}/{args.attempts} target={target} ===',flush=True)
