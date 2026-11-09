@@ -1,18 +1,18 @@
 {
-  "target_date": "2026-11-06",
+  "target_date": "2026-11-09",
   "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/duck_latest.xlsx",
-  "all_market_stock_count": 1960,
+  "all_market_stock_count": 1970,
   "counts": {
-    "stocks": 1960,
+    "stocks": 1970,
     "three_rate_yes": 0,
     "three_rate_no": 0,
     "three_rate_na": 39,
-    "three_rate_listing_insufficient": 1919,
+    "three_rate_listing_insufficient": 1930,
     "three_rate_prior_history_short": 0,
-    "three_rate_data_missing": 2,
+    "three_rate_data_missing": 1,
     "three_rate_unknown": 0,
-    "revenue_yes": 741,
-    "revenue_no": 1209,
+    "revenue_yes": 743,
+    "revenue_no": 1217,
     "revenue_unknown": 10
   },
   "source": {
