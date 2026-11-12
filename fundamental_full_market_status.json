@@ -1,25 +1,25 @@
 {
-  "target_date": "2026-11-11",
+  "target_date": "2026-11-12",
   "workbook": "/home/runner/work/tw-stock-dashboard-test/tw-stock-dashboard-test/duck_latest.xlsx",
-  "all_market_stock_count": 1956,
+  "all_market_stock_count": 1953,
   "counts": {
-    "stocks": 1956,
+    "stocks": 1953,
     "three_rate_yes": 0,
     "three_rate_no": 0,
     "three_rate_na": 39,
-    "three_rate_listing_insufficient": 1916,
+    "three_rate_listing_insufficient": 1912,
     "three_rate_prior_history_short": 0,
-    "three_rate_data_missing": 1,
+    "three_rate_data_missing": 2,
     "three_rate_unknown": 0,
-    "revenue_yes": 714,
-    "revenue_no": 1231,
+    "revenue_yes": 625,
+    "revenue_no": 1317,
     "revenue_unknown": 11
   },
   "source": {
     "bulk_income_added": 0,
     "bulk_income_errors": [],
     "revenue_recalc": 0,
-    "revenue_recalc_na": 7
+    "revenue_recalc_na": 11
   },
   "repair": null,
   "quanta_2382": {
@@ -27,8 +27,8 @@
     "name": "廣達",
     "three_rate_status": "上市時間不足",
     "three_rate_period": null,
-    "revenue_status": "未三增",
-    "revenue_month": "2026-09",
+    "revenue_status": "營收三增",
+    "revenue_month": "2026-10",
     "gross_current_pct": null,
     "gross_prev_pct": null,
     "operating_current_pct": null,
