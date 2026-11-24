@@ -1,10 +1,10 @@
 {
   "status": "success",
-  "target_date": "2026-11-20",
-  "rs_date": "2026-11-20",
-  "duck_date": "2026-11-20",
-  "last_run_taipei": "2026-11-21 02:37:57",
-  "message": "2026-11-20 兩套系統皆已更新完成。",
+  "target_date": "2026-11-24",
+  "rs_date": "2026-11-24",
+  "duck_date": "2026-11-24",
+  "last_run_taipei": "2026-11-25 04:48:59",
+  "message": "2026-11-24 兩套系統皆已更新完成。",
   "attempts": 1,
   "schedule": "週一至週五 18:05（Asia/Taipei）"
 }
